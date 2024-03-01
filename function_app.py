@@ -14,7 +14,7 @@ def upload_rss_entity_to_blob(connection_string, container_name, blob_name, podc
         blob_service_client = BlobServiceClient.from_connection_string(connection_string)
         container_client = blob_service_client.get_container_client(container_name)
         blob_client = container_client.get_blob_client(blob=blob_name)
-        # 分 chunk 上傳的
+        # 分 chunk 上傳
         chunk_size = 4 * 1024 * 1024  # 4MB
         block_list = []
         size = len(podcast_data)
@@ -32,7 +32,7 @@ def upload_rss_entity_to_blob(connection_string, container_name, blob_name, podc
 
             start += chunk_size
 
-            # 提交所有 chunks 以完成上传
+            # 提交所有 chunks 以完成上傳
         blob_client.commit_block_list(block_list)
         print(f"Successfully uploaded '{blob_name}' to Azure Blob Storage.")
            
@@ -70,10 +70,10 @@ def timer_trigger(myTimer: func.TimerRequest) -> None:
         
             file_name = podcast_url.split("/")[-1]
             if 'enclosures' in entry and len(entry.enclosures) > 0:
-                podcast_url = entry.enclosures[0]['href']  # 使用 enclosure中的URL
+                podcast_url = entry.enclosures[0]['href']  # 使用 enclosure  中的URL
                 blob_name= f"{prefix}[{parser.parse(entry.published).strftime('%Y%m%d')}] {entry.title}.mp3"  
             else: 
-                publish_date = parser.parse(entry.published)  # 使用 dateutil解析發布日期
+                publish_date = parser.parse(entry.published)  # 使用 dateutil 解析發布日期
                 formatted_date = publish_date.strftime('%Y%m%d')
                 blob_name = f"{prefix}[{formatted_date}] {file_name}"
             
