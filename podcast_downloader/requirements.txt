@@ -8,3 +8,4 @@ feedparser
 azure-storage-blob
 requests
 python-dateutil==2.8.1
+json
