@@ -39,7 +39,7 @@ class EchoBot(ActivityHandler):
             )
 
             # Send the template message
-            return await turn_context.send_activity(template_message)
+            await turn_context.send_activity(template_message)
         else:   
             return await turn_context.send_activity(
                 MessageFactory.text(f"Echo: {turn_context.activity.text}")
