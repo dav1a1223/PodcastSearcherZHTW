@@ -11,3 +11,4 @@
 - 因為是用 Microsoft 的 Bot Framework，和之前 linebotsdk+flask 的寫法不同，不確定能不能用 linebot 內建的一些功能，例如選單。
    
 ref: [利用 Azure Portal 建立 chatbot 相關的雲端資源](https://ithelp.ithome.com.tw/articles/10246979)
+echobot ref: [echobot sample](https://github.com/microsoft/BotBuilder-Samples/tree/main/samples/python/02.echo-bot?fbclid=IwAR3Yjm9IpIvCOhHv7-veFD9uIW81nZgbIkI5ltoopz7Kf_YLJkZglc1beQg)
