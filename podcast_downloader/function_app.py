@@ -1,16 +1,15 @@
 import azure.functions as func
 import requests
-from azure.storage.blob import BlobServiceClient, BlobClient, BlobBlock
+from azure.storage.blob import BlobServiceClient, BlobBlock
 import os
 import json
 import feedparser
 from dateutil import parser
-import uuid
 import base64
 import logging
-from azure.storage.queue import QueueClient, BinaryBase64EncodePolicy, BinaryBase64DecodePolicy
+from azure.storage.queue import QueueClient, BinaryBase64EncodePolicy
 from datetime import datetime
-
+import azure.cognitiveservices.speech as speechsdk
 
 
 app = func.FunctionApp()
@@ -54,6 +53,42 @@ def update_downloaded_status(blob_service_client, container_name, download_statu
     container_client = blob_service_client.get_container_client(container_name)
     blob_client = container_client.get_blob_client(blob="downloaded_episodes_status.json")
     blob_client.upload_blob(json.dumps(download_status), overwrite=True)
+    
+def speech_to_text_and_upload_to_blob(podcast_url, connection_string, container_name, blob_name):
+    # 設置
+    speech_config = speechsdk.SpeechConfig(subscription=os.environ.get('SPEECH_KEY'), region=os.environ.get('SPEECH_REGION'))
+    speech_config.speech_recognition_language = "zh-TW"
+    
+    # 使用 podcast URL 
+    audio_config = speechsdk.audio.AudioConfig(filename=podcast_url)
+    
+    speech_recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config, audio_config=audio_config)
+    
+    # 進行語音識別
+    print("開始轉換...")
+    speech_recognition_result = speech_recognizer.recognize_once_async().get()
+    
+    # 檢查结果
+    if speech_recognition_result.reason == speechsdk.ResultReason.RecognizedSpeech:
+        recognized_text = speech_recognition_result.text
+        print("轉換後的文檔：", recognized_text)
+        
+        
+        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
+        
+        # 上傳文檔到 blob
+        print(f"正在上傳文檔到 Blob Storage: {container_name}/{blob_name}")
+        blob_client.upload_blob(recognized_text, overwrite=True)
+        print("上傳完成。")
+        
+    elif speech_recognition_result.reason == speechsdk.ResultReason.NoMatch:
+        print("没有識別到语音。")
+    elif speech_recognition_result.reason == speechsdk.ResultReason.Canceled:
+        cancellation_details = speech_recognition_result.cancellation_details
+        print("語音識別被取消：", cancellation_details.reason)
+        if cancellation_details.reason == speechsdk.CancellationReason.Error:
+            print("错误详情：", cancellation_details.error_details)
 
 rss_feeds = [
     {"url": "https://feeds.soundon.fm/podcasts/adf29720-e93b-4856-a09e-b73544147ec4.xml", "prefix": "【好味小姐】"}
@@ -144,7 +179,7 @@ def queue_trigger(azqueue: func.QueueMessage):
                 if response.status_code == 200:
                     logging.info(f"Downloading {podcast_url} to {blob_name}...")
                     
-                    upload_rss_entity_to_blob(connection_string, container_name, blob_name, podcast_url)
+                    speech_to_text_and_upload_to_blob(podcast_url, connection_string, container_name, blob_name)
                   
                     logging.info(f"Uploaded {blob_name} to Azure Blob Storage.")
                 else:
