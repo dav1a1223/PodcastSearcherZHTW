@@ -208,14 +208,14 @@ def queue_trigger(azqueue: func.QueueMessage):
         logging.info(f"Found entry for guid: {guid}")
         entry = entries_dict.get(guid)
         if entry:
-            podcast_url = entry.links[0].href
+            podcast_url = feed.entries[0].enclosures[0]["href"]
             blob_name = f"{prefix}[{parser.parse(entry.published).strftime('%Y%m%d')}] {entry.title}.mp3" 
             try:
                 response = requests.get(podcast_url, stream=True)  # 使用 stream 参数確保不會立即下載所有
                 if response.status_code == 200:
                     logging.info(f"Downloading {podcast_url} to {blob_name}...")
                     
-                    #upload_rss_entity_to_blob(connection_string, container_name, blob_name, podcast_url)
+                    upload_rss_entity_to_blob(connection_string, container_name, blob_name, podcast_url)
                   
                     logging.info(f"Uploaded {blob_name} to Azure Blob Storage.")
                 else:
