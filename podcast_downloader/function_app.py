@@ -1,6 +1,6 @@
 import azure.functions as func
 import requests
-from azure.storage.blob import BlobServiceClient, BlobBlock, BlobServiceClient, generate_container_sas, ContainerSasPermissions
+from azure.storage.blob import BlobServiceClient, BlobBlock, BlobServiceClient, ContainerSasPermissions, BlobSasPermissions, generate_blob_sas
 import os
 import json
 import feedparser
@@ -8,144 +8,32 @@ from dateutil import parser
 import base64
 import logging
 from azure.storage.queue import QueueClient, BinaryBase64EncodePolicy
-from datetime import datetime
+from datetime import datetime, timedelta
+import http.client
+import urllib.parse
+from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
+
+
+'''
 import azure.cognitiveservices.speech as speechsdk
 import tempfile
 from pydub import AudioSegment
-
-import time
+'''
+import http.client
 import base64
-import math
+'''
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import timedelta
+'''
+import urllib.request
+import urllib.parse
+import urllib.error
 
-AudioSegment.converter = "C:/ffmpeg/bin/ffmpeg" 
 
 
 app = func.FunctionApp()
+
 # 下載並轉換 url
-def download_and_convert_audio(podcast_url):
-    AudioSegment.converter = "C:/ffmpeg/bin/ffmpeg" 
-    response = requests.get(podcast_url, stream=True)
-    if response.status_code == 200:
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_mp3_file:
-            for chunk in response.iter_content(chunk_size=1024):
-                tmp_mp3_file.write(chunk)
-          
-            tmp_mp3_file_path = tmp_mp3_file.name
-
-        # 使用 pydub 轉換 mp3 文件为 wav 格式
-        sound = AudioSegment.from_mp3(tmp_mp3_file_path)
-        sound = sound.set_frame_rate(16000).set_channels(1)
-        tmp_wav_file_path = tmp_mp3_file_path.replace(".mp3", ".wav")
-        sound.export(tmp_wav_file_path, format="wav")
-        
-        # 刪除臨時 MP3 文件
-        os.unlink(tmp_mp3_file_path)
-        
-        return tmp_wav_file_path
-    else:
-        logging.warning(f"Failed to download audio. Status code: {response.status_code}, URL: {podcast_url}")
-        return None
-
-def speech_recognize_continuous_from_stream(audio_data, start_time):
-    speech_config = speechsdk.SpeechConfig(subscription=os.getenv("SPEECH_KEY"), region=os.getenv("SPEECH_REGION"))
-    logging.info(f"Temporary WAV file path: {audio_data}")
-    speech_config.set_property(property_id=speechsdk.PropertyId.SpeechServiceConnection_LanguageIdMode, value='Continuous')
-    auto_detect_source_language_config = speechsdk.languageconfig.AutoDetectSourceLanguageConfig(languages=["zh-TW"])
-    audio_config = speechsdk.audio.AudioConfig(filename=audio_data)
-    speech_recognizer = speechsdk.SpeechRecognizer(
-    speech_config=speech_config, 
-    auto_detect_source_language_config=auto_detect_source_language_config,
-    audio_config=audio_config)
-    all_results = []
-
-    done = False
-
-    def stop_cb(evt):
-        print('CLOSING on {}'.format(evt))
-        nonlocal done
-        done = True
-    def handle_final_result(evt):
-        offset = evt.result.offset / 10000000  # 將100納秒轉換為秒
-        # 加上片段的開始時間
-        adjusted_start_time = start_time + offset
-
-        # 格式化時間為【時:分:秒】
-        start_time_formatted = str(timedelta(seconds=adjusted_start_time))[:-7]
-        
-        text_with_time = f"[{start_time_formatted}] {evt.result.text}"
-        all_results.append(text_with_time)
-
-    # Connect callbacks to the events fired by the speech recognizer
-    speech_recognizer.recognizing.connect(lambda evt: print('RECOGNIZING: {}'.format(evt)))
-    speech_recognizer.recognized.connect(lambda evt: print('RECOGNIZED: {}'.format(evt)))
-    speech_recognizer.session_started.connect(lambda evt: print('SESSION STARTED: {}'.format(evt)))
-    speech_recognizer.session_stopped.connect(lambda evt: print('SESSION STOPPED {}'.format(evt)))
-    speech_recognizer.canceled.connect(lambda evt: print('CANCELED {}'.format(evt)))
-    speech_recognizer.recognized.connect(handle_final_result)
-
-    # stop continuous recognition on either session stopped or canceled events
-    speech_recognizer.session_stopped.connect(stop_cb)
-    speech_recognizer.canceled.connect(stop_cb)
-
-    # Start continuous speech recognition
-    speech_recognizer.start_continuous_recognition()
-    while not done:
-        time.sleep(.5)
-
-    speech_recognizer.stop_continuous_recognition()
-
-    logging.info(all_results)
-    return all_results
-
-def split_audio(audio_path):
-    chunk_length_ms=60000
-    audio = AudioSegment.from_file(audio_path)
-    chunks = math.ceil(len(audio) / chunk_length_ms)
-    
-    for i in range(chunks):
-        start_ms = i * chunk_length_ms
-        start_time = start_ms / 1000.0  # 轉換為秒
-        end_ms = start_ms + chunk_length_ms
-        chunk_data = audio[start_ms:end_ms]
-        chunk_filename = f"chunk_{i}.wav"
-        chunk_data.export(chunk_filename, format="wav")
-        yield start_time, chunk_filename
-
-def flatten_results(nested_results):
-    flat_list = []
-    for sublist in nested_results:
-        if sublist is not None:  # 確保子列表不是 None
-            for item in sublist:
-                flat_list.append(item)
-    return flat_list
-def transcribe_concurrently(audio_chunks):
-    with ThreadPoolExecutor(max_workers=len(audio_chunks)) as executor:
-        future_to_chunk_info = {
-            executor.submit(speech_recognize_continuous_from_stream, chunk, start_time): (start_time, chunk) 
-            for start_time, chunk in audio_chunks
-        }
-          # 初始化一個列表來保存結果，長度與 audio_chunks_with_times 相同，並填充 None
-        ordered_results = [None] * len(audio_chunks)
-
-        for future in as_completed(future_to_chunk_info):
-            start_time, chunk = future_to_chunk_info[future]  # 從字典中獲取片段和其開始時間
-            try:
-                result = future.result()
-                # 確定片段在原始列表中的索引，並將結果放在正確的位置
-                index = audio_chunks.index((start_time, chunk))
-                ordered_results[index] = result
-            except Exception as exc:
-                logging.error(f'Chunk {chunk} generated an exception: {exc}')
-            finally:
-                # 處理完畢後，刪除該音頻片段文件
-                os.remove(chunk)
-                print(f"Deleted chunk file: {chunk}")
-    flattened_results = flatten_results(ordered_results)
-    return flattened_results
-
+# 下載並轉換 url
 def upload_rss_entity_to_blob(connection_string, container_name, blob_name, podcast_url):
     try:
         blob_service_client = BlobServiceClient.from_connection_string(connection_string)
@@ -190,26 +78,40 @@ def upload_text_to_blob(container_name, text_blob_name, text, connection_string)
     blob_service_client = BlobServiceClient.from_connection_string(connection_string)
     container_client = blob_service_client.get_container_client(container_name)
     blob_client = container_client.get_blob_client(blob=text_blob_name)
-    if text:  # 確保文本不是空的
+    if text:  # 確保不要再給我簡體中文了!!!!!
             text_bytes = text.encode('utf-8')
             blob_client.upload_blob(text_bytes, overwrite=True)
             logging.info(f"Text uploaded to Blob Storage with name: {text_blob_name}")
     else:
             logging.warning(f"Attempted to upload empty text to Blob Storage with name: {text_blob_name}")
+def generate_sas_url(container_name, blob_name):
+    # 設定 Azure Storage 帳戶和密鑰
+    account_name = 'podcastzhtw'
+    account_key = '8+leBIccaBh2jlBTxz/VvnjOLj+e81MRzEMBu7rcjHGhQwAyU5h16gZiH+o8DdCjlJ9FmzQpvqY7+AStB9rUeg=='
+    
+    blob_service_client = BlobServiceClient(account_url=f"https://{account_name}.blob.core.windows.net", credential=account_key)
+    sas_token = blob_service_client.generate_blob_sas(
+        container_name=container_name,
+        blob_name=blob_name,
+        permission=BlobSasPermissions(read=True),
+        expiry=datetime.utcnow() + timedelta(hours=1)
+    )
+    return f"https://{account_name}.blob.core.windows.net/{container_name}/{blob_name}?{sas_token}"
+
 
 rss_feeds = [
     {"url": "https://feeds.soundon.fm/podcasts/adf29720-e93b-4856-a09e-b73544147ec4.xml", "prefix": "【好味小姐】"}
 ]
 
 @app.schedule(schedule="0 0 2 * * *", arg_name="myTimer", run_on_startup=True, use_monitor=False)
-def timer_trigger(myTimer: func.TimerRequest) -> None:
+def timer_trigger(myTimer: func.TimerRequest, context: func.Context) -> None:
     if myTimer.past_due:
         logging.info('The timer is past due!')
 
     # Azure Blob Storage 配置
     connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     container_name = os.getenv("AZURE_STORAGE_CONTAINER_NAME")
-
+    function_directory = context.function_directory
     
     # 初始化 Azure Blob Storage 客户端
     blob_service_client = BlobServiceClient.from_connection_string(connection_string)
@@ -226,7 +128,7 @@ def timer_trigger(myTimer: func.TimerRequest) -> None:
         feed = feedparser.parse(rss_url)
     
         if rss_url not in download_status:  # 第一次下載這
-            episodes_batches = feed.entries[:40]   # 下載最新的40集
+            episodes_batches = feed.entries[:10]   # 下載最新的40集
         else:
             latest_episode_guid = feed.entries[0].get("guid")
             if download_status[rss_url]["guid"] != latest_episode_guid:    \
@@ -242,11 +144,12 @@ def timer_trigger(myTimer: func.TimerRequest) -> None:
                         "guid": latest_episode_guid
                      }
                     # 更新狀態
-                    #update_downloaded_status(blob_service_client, container_name, download_status)
-                    #upload_rss_entity_to_blob(connection_string, "audiofiles", blob_name, podcast_url)
-                    
-                    tmp_wav_file_path = download_and_convert_audio(podcast_url)
+                    update_downloaded_status(blob_service_client, container_name, download_status)
+                    upload_rss_entity_to_blob(connection_string, "audiofiles", blob_name, podcast_url)
 
+                    '''
+                    tmp_wav_file_path = download_and_convert_audio(podcast_url, function_directory)
+                    
                     if tmp_wav_file_path:
                         audio_chunks = list(split_audio(tmp_wav_file_path))
                         results = transcribe_concurrently(audio_chunks)
@@ -254,6 +157,7 @@ def timer_trigger(myTimer: func.TimerRequest) -> None:
                         logging.info(text_to_upload)
                         upload_text_to_blob(container_name, text_blob_name, text_to_upload, connection_string)
                         os.unlink(tmp_wav_file_path)
+                    '''
                     continue
             else:
                 continue
@@ -311,7 +215,7 @@ def queue_trigger(azqueue: func.QueueMessage):
                 if response.status_code == 200:
                     logging.info(f"Downloading {podcast_url} to {blob_name}...")
                     
-                    upload_rss_entity_to_blob(connection_string, container_name, blob_name, podcast_url)
+                    #upload_rss_entity_to_blob(connection_string, container_name, blob_name, podcast_url)
                   
                     logging.info(f"Uploaded {blob_name} to Azure Blob Storage.")
                 else:
@@ -322,3 +226,62 @@ def queue_trigger(azqueue: func.QueueMessage):
 
 
 
+@app.blob_trigger(arg_name="myblob", path="audiofiles",
+                               connection="podcastzhtw_STORAGE") 
+def blob_trigger(myblob: func.InputStream):
+    logging.info(f"Python blob trigger function processed blob"
+                f"Name: {myblob.name}"
+                f"Blob Size: {myblob.length} bytes")
+    logging.info(myblob.name)
+    subscription_key = os.getenv("SPEECH_KEY")
+    host = 'podcasttranslater.cognitiveservices.azure.com'
+
+    headers = {
+    # Request headers
+    'Content-Type': 'application/json',
+    'Ocp-Apim-Subscription-Key':subscription_key ,
+    }
+
+    blob_name = myblob.name 
+    container_name = "audiofiles"
+    logging.info(blob_name)
+    blob_url_with_sas = generate_sas_url(container_name, blob_name)
+
+
+    sas_url = generate_sas_url(container_name, blob_name)
+    text_name = blob_name.rsplit('.', 1)[0] 
+    body_dict = {
+        "contentUrls": [
+        blob_url_with_sas
+        ],
+
+        "properties": {
+            "destinationContainerUrl":"https://podcastzhtw.blob.core.windows.net/podcasts?sp=racwdli&st=2024-03-22T00:36:42Z&se=2024-05-30T08:36:42Z&spr=https&sv=2022-11-02&sr=c&sig=8yq%2BJY6ECZ3RYgp6sWF5vBJmtv6tYBxao52Q7I91XBk%3D",
+            "wordLevelTimestampsEnabled": True,
+            "displayFormWordLevelTimestampsEnabled":True,
+            "languageIdentification": {"candidateLocales": ["zh-TW", "en-US"]},
+            "timeToLive":"PT12H"
+        },    
+        "locale": "en-US",
+        "displayName": text_name
+    }
+
+    # 將字典轉換為 JSON 字串
+    body_json = json.dumps(body_dict)
+
+    params = urllib.parse.urlencode({
+    })
+
+    try:
+        conn = http.client.HTTPSConnection(host)
+        conn.request("POST", "/speechtotext/v3.1/transcriptions", body_json, headers)
+        response = conn.getresponse()
+        data = response.read().decode("UTF-8")
+        data_json = json.loads(data)
+        conn.close()
+        logging.info("Checking status.")
+
+        completed = False
+
+    except Exception as e:
+        print("[Errno {0}] {1}".format(e.errno, e.strerror))

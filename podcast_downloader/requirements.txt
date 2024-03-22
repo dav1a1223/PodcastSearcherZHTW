@@ -8,6 +8,5 @@ azure-storage-blob
 azure-storage-queue
 requests
 python-dateutil==2.8.2
-azure-cognitiveservices-speech
-pydub
+
 
