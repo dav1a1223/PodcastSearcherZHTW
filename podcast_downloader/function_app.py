@@ -1,6 +1,6 @@
 import azure.functions as func
 import requests
-from azure.storage.blob import BlobServiceClient, BlobBlock, BlobServiceClient, ContainerSasPermissions, BlobSasPermissions, generate_blob_sas
+from azure.storage.blob import BlobServiceClient, BlobBlock, BlobServiceClient, BlobSasPermissions, generate_blob_sas
 import os
 import json
 import feedparser
@@ -32,7 +32,6 @@ import urllib.error
 
 app = func.FunctionApp()
 
-# 下載並轉換 url
 # 下載並轉換 url
 def upload_rss_entity_to_blob(connection_string, container_name, blob_name, podcast_url):
     try:
@@ -84,19 +83,25 @@ def upload_text_to_blob(container_name, text_blob_name, text, connection_string)
             logging.info(f"Text uploaded to Blob Storage with name: {text_blob_name}")
     else:
             logging.warning(f"Attempted to upload empty text to Blob Storage with name: {text_blob_name}")
-def generate_sas_url(container_name, blob_name):
-    # 設定 Azure Storage 帳戶和密鑰
-    account_name = 'podcastzhtw'
-    account_key = '8+leBIccaBh2jlBTxz/VvnjOLj+e81MRzEMBu7rcjHGhQwAyU5h16gZiH+o8DdCjlJ9FmzQpvqY7+AStB9rUeg=='
-    
-    blob_service_client = BlobServiceClient(account_url=f"https://{account_name}.blob.core.windows.net", credential=account_key)
-    sas_token = blob_service_client.generate_blob_sas(
-        container_name=container_name,
-        blob_name=blob_name,
-        permission=BlobSasPermissions(read=True),
-        expiry=datetime.utcnow() + timedelta(hours=1)
-    )
-    return f"https://{account_name}.blob.core.windows.net/{container_name}/{blob_name}?{sas_token}"
+def generate_sas_url(account_name, account_key, container_name, blob_name):
+
+    # 設定 BlobSasPermissions
+    permissions = BlobSasPermissions(write=True)
+
+    # 設定 SAS 有效期限
+    sas_expiry = datetime.utcnow() + timedelta(hours=1)  # 1小時後過期
+
+    # 生成 SAS token
+    sas_token = generate_blob_sas(account_name=account_name,
+                               container_name=container_name,
+                               blob_name=blob_name,
+                               account_key=account_key,
+                               permission=permissions,
+                               expiry=sas_expiry)
+
+    # 拼接 Blob URL with SAS
+    blob_url_with_sas = f"https://{account_name}.blob.core.windows.net/{container_name}/{blob_name}?{sas_token}"
+    return blob_url_with_sas
 
 
 rss_feeds = [
@@ -128,7 +133,7 @@ def timer_trigger(myTimer: func.TimerRequest, context: func.Context) -> None:
         feed = feedparser.parse(rss_url)
     
         if rss_url not in download_status:  # 第一次下載這
-            episodes_batches = feed.entries[:10]   # 下載最新的40集
+            episodes_batches = feed.entries[31:81]   # 下載 50集
         else:
             latest_episode_guid = feed.entries[0].get("guid")
             if download_status[rss_url]["guid"] != latest_episode_guid:    \
@@ -194,8 +199,6 @@ def timer_trigger(myTimer: func.TimerRequest, context: func.Context) -> None:
                                connection="podcastzhtw") 
 def queue_trigger(azqueue: func.QueueMessage):
     connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
-    container_name = os.getenv("AZURE_STORAGE_CONTAINER_NAME")
-    queue_name="podcast-queue"
     
       # 將解碼後的 bytes 轉換為 JSON 字符串
     message = json.loads(azqueue.get_body().decode('utf-8'))
@@ -208,14 +211,14 @@ def queue_trigger(azqueue: func.QueueMessage):
         logging.info(f"Found entry for guid: {guid}")
         entry = entries_dict.get(guid)
         if entry:
-            podcast_url = feed.entries[0].enclosures[0]["href"]
+            podcast_url = entry.enclosures[0]["href"]
             blob_name = f"{prefix}[{parser.parse(entry.published).strftime('%Y%m%d')}] {entry.title}.mp3" 
             try:
                 response = requests.get(podcast_url, stream=True)  # 使用 stream 参数確保不會立即下載所有
                 if response.status_code == 200:
                     logging.info(f"Downloading {podcast_url} to {blob_name}...")
                     
-                    upload_rss_entity_to_blob(connection_string, container_name, blob_name, podcast_url)
+                    upload_rss_entity_to_blob(connection_string,"audiofiles", blob_name, podcast_url)
                   
                     logging.info(f"Uploaded {blob_name} to Azure Blob Storage.")
                 else:
@@ -243,12 +246,15 @@ def blob_trigger(myblob: func.InputStream):
     }
 
     blob_name = myblob.name 
+    account_name = "podcastzhtw"
+    account_key = os.getenv("AZURE_STORAGE_KEY")
     container_name = "audiofiles"
     logging.info(blob_name)
-    blob_url_with_sas = generate_sas_url(container_name, blob_name)
+    
+    blob_url_with_sas = generate_sas_url(account_name, account_key, container_name, blob_name)
 
 
-    sas_url = generate_sas_url(container_name, blob_name)
+
     text_name = blob_name.rsplit('.', 1)[0] 
     body_dict = {
         "contentUrls": [
