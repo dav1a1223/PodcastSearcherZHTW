@@ -86,8 +86,8 @@ def upload_text_to_blob(container_name, text_blob_name, text, connection_string)
 def generate_sas_url(account_name, account_key, container_name, blob_name):
 
     # 設定 BlobSasPermissions
-    permissions = BlobSasPermissions(write=True)
-
+    permissions = BlobSasPermissions(read=True, write=True)
+    logging.info("generate SAS")
     # 設定 SAS 有效期限
     sas_expiry = datetime.utcnow() + timedelta(hours=1)  # 1小時後過期
 
@@ -101,6 +101,7 @@ def generate_sas_url(account_name, account_key, container_name, blob_name):
 
     # 拼接 Blob URL with SAS
     blob_url_with_sas = f"https://{account_name}.blob.core.windows.net/{container_name}/{blob_name}?{sas_token}"
+    logging.info(f"SAS：{blob_url_with_sas}")
     return blob_url_with_sas
 
 
@@ -236,6 +237,7 @@ def blob_trigger(myblob: func.InputStream):
                 f"Name: {myblob.name}"
                 f"Blob Size: {myblob.length} bytes")
     logging.info(myblob.name)
+    blob_name = myblob.name.split('/')[-1]
     subscription_key = os.getenv("SPEECH_KEY")
     host = 'podcasttranslater.cognitiveservices.azure.com'
 
@@ -245,7 +247,6 @@ def blob_trigger(myblob: func.InputStream):
     'Ocp-Apim-Subscription-Key':subscription_key ,
     }
 
-    blob_name = myblob.name 
     account_name = "podcastzhtw"
     account_key = os.getenv("AZURE_STORAGE_KEY")
     container_name = "audiofiles"
@@ -266,10 +267,10 @@ def blob_trigger(myblob: func.InputStream):
             "wordLevelTimestampsEnabled": True,
             "displayFormWordLevelTimestampsEnabled":True,
             "languageIdentification": {"candidateLocales": ["zh-TW", "en-US"]},
-            "timeToLive":"PT12H"
+            "timeToLive":"PT24H"
         },    
         "locale": "en-US",
-        "displayName": text_name
+        "displayName": text_name,
     }
 
     # 將字典轉換為 JSON 字串
@@ -280,14 +281,15 @@ def blob_trigger(myblob: func.InputStream):
 
     try:
         conn = http.client.HTTPSConnection(host)
+        logging.info(f"success  {blob_name}")
         conn.request("POST", "/speechtotext/v3.1/transcriptions", body_json, headers)
         response = conn.getresponse()
         data = response.read().decode("UTF-8")
         data_json = json.loads(data)
+        logging.info(f"transcription respond {data_json}")
         conn.close()
-        logging.info("Checking status.")
 
-        completed = False
+   
 
     except Exception as e:
         print("[Errno {0}] {1}".format(e.errno, e.strerror))
