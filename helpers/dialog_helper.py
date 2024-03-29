@@ -4,7 +4,7 @@
 from botbuilder.core import StatePropertyAccessor, TurnContext
 from botbuilder.dialogs import Dialog, DialogSet, DialogTurnStatus
 
-
+# deal with the lifetime of the dialog 
 class DialogHelper:
     @staticmethod
     async def run_dialog(
@@ -15,5 +15,6 @@ class DialogHelper:
 
         dialog_context = await dialog_set.create_context(turn_context)
         results = await dialog_context.continue_dialog()
+        # if dialog finished, then start a new dialog
         if results.status == DialogTurnStatus.Empty:
             await dialog_context.begin_dialog(dialog.id)
