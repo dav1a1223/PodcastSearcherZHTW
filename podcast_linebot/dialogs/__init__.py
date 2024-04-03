@@ -2,5 +2,6 @@
 # Licensed under the MIT License.
 
 from .user_profile_dialog import UserProfileDialog
+from .user_profile_dialog import TextProcessor
 
-__all__ = ["UserProfileDialog"]
+__all__ = ["UserProfileDialog","TextProcessor"]

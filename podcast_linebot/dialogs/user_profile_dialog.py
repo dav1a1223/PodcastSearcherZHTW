@@ -21,6 +21,7 @@ from botbuilder.core import MessageFactory, UserState
 
 from data_models import UserProfile
 import jieba
+from .text_processor import TextProcessor
 
 class UserProfileDialog(ComponentDialog):
     def __init__(self, user_state: UserState):
@@ -33,10 +34,11 @@ class UserProfileDialog(ComponentDialog):
                 WaterfallDialog.__name__,
                 [
                     self.podcast_step,
-                    self.name_step,
-                    self.name_confirm_step,
                     self.query_step,
+                    self.confirm_step,
                     self.summary_step,
+                    self.handle_query_again,
+                    self.final_step
                 ],
             )
         )
@@ -47,116 +49,82 @@ class UserProfileDialog(ComponentDialog):
         self.initial_dialog_id = WaterfallDialog.__name__
 
     async def podcast_step(self, step_context: WaterfallStepContext) -> DialogTurnResult:
-        # WaterfallStep always finishes with the end of the Waterfall or with another dialog;
-        # here it is a Prompt Dialog. Running a prompt here means the next WaterfallStep will
-        # be run when the users response is received.
         return await step_context.prompt(
             ChoicePrompt.__name__,
             PromptOptions(
                 prompt=MessageFactory.text("Please select the podcast you are interested in."),
-                choices=[Choice("好味小姐"), Choice("股癌"), Choice("百靈果")],
-            ),
-        )
-
-    async def name_step(self, step_context: WaterfallStepContext) -> DialogTurnResult:
-        step_context.values["podcast"] = step_context.result.value
-
-        return await step_context.prompt(
-            TextPrompt.__name__,
-            PromptOptions(prompt=MessageFactory.text("Please enter your name.")),
-        )
-
-    async def name_confirm_step(
-        self, step_context: WaterfallStepContext
-    ) -> DialogTurnResult:
-        step_context.values["name"] = step_context.result
-
-        # We can send messages to the user at any point in the WaterfallStep.
-        await step_context.context.send_activity(
-            MessageFactory.text(f"Thanks {step_context.result}")
-        )
-
-        # WaterfallStep always finishes with the end of the Waterfall or
-        # with another dialog; here it is a Prompt Dialog.
-        return await step_context.prompt(
-            ConfirmPrompt.__name__,
-            PromptOptions(
-                prompt=MessageFactory.text("Would you like to give your query?")
+                choices=[Choice("podcast A"), Choice("podcast B"), Choice("podcast C")],
             ),
         )
 
     async def query_step(self, step_context: WaterfallStepContext) -> DialogTurnResult:
-        if step_context.result:
-            # User said "yes" so we will be prompting for the query.
-            # WaterfallStep always finishes with the end of the Waterfall or with another dialog,
-            # here it is a Prompt Dialog.
-            return await step_context.prompt(
+        podcast = step_context.result.value
+        step_context.values["podcast"] = podcast
+
+        await step_context.context.send_activity(
+            MessageFactory.text(f"Your choice is {podcast}.")
+        )
+
+        return await step_context.prompt(
                 TextPrompt.__name__,
                 PromptOptions(
-                    prompt=MessageFactory.text("Please enter your query.")),
-            )
-
-        # User said "no" so we will skip the next step. Give -1 as the query.
-        return await step_context.next(-1)
-
-
-    # async def confirm_step(
-    #     self, step_context: WaterfallStepContext
-    # ) -> DialogTurnResult:
-    #     step_context.values["picture"] = (
-    #         None if not step_context.result else step_context.result[0]
-    #     )
-
-    #     # WaterfallStep always finishes with the end of the Waterfall or
-    #     # with another dialog; here it is a Prompt Dialog.
-    #     return await step_context.prompt(
-    #         ConfirmPrompt.__name__,
-    #         PromptOptions(prompt=MessageFactory.text("Is this ok?")),
-    #     )
-
-    async def summary_step(
-        self, step_context: WaterfallStepContext
-    ) -> DialogTurnResult:
+                    prompt=MessageFactory.text("Please enter your query.\nUse，to separate each term.")),
+        )
+    
+    async def confirm_step( self, step_context: WaterfallStepContext) -> DialogTurnResult:
         step_context.values["query"] = step_context.result
-        if step_context.result:
-            # Get the current profile object from user state.  Changes to it
-            # will saved during Bot.on_turn.
-            user_profile = await self.user_profile_accessor.get(
+        
+        user_profile = await self.user_profile_accessor.get(
                 step_context.context, UserProfile
+        )    
+        user_profile.podcast = step_context.values["podcast"]
+        user_profile.query = step_context.values["query"]
+
+        processor = TextProcessor()
+        seg_list =  processor.word_segmentation(user_profile.query, True)
+        msg = f"Choice of podcast : {user_profile.podcast} \nYour query : {seg_list}"
+
+        await step_context.context.send_activity(MessageFactory.text(msg))
+
+        return await step_context.prompt(
+            ConfirmPrompt.__name__,
+            PromptOptions(prompt=MessageFactory.text("Are you satisfied with the search result?")),
+        )
+    
+    async def summary_step(self, step_context: WaterfallStepContext) -> DialogTurnResult:
+        step_context.values["satisfied"] = step_context.result
+        if step_context.values["satisfied"]:
+            return await step_context.prompt(
+                ConfirmPrompt.__name__,
+                PromptOptions(prompt=MessageFactory.text("Do you want to search for another podcast program?")),
             )
-
-            user_profile.podcast = step_context.values["podcast"]
-            user_profile.name = step_context.values["name"]
-            user_profile.query = step_context.values["query"]
-            #user_profile.picture = step_context.values["picture"]
-
-            msg = f"Choice of podcast : {user_profile.podcast} \nYour name : {user_profile.name}"
-            if user_profile.query != -1:
-                msg += f"\nQuery : {user_profile.query}"
-                seg_list = jieba.lcut(user_profile.query)
-                seg_list_total = jieba.lcut(user_profile.query, cut_all=True)
-                seg_list_search = jieba.lcut_for_search(user_profile.query)
-                msg += f"\nJieba精確模式 : {seg_list}"
-                msg += f"\nJieba全模式 : {seg_list_total}"
-                msg += f"\nJieba搜索引擎模式 : {seg_list_search}\n"
-
-            await step_context.context.send_activity(MessageFactory.text(msg))
-
-            # if user_profile.picture:
-            #     await step_context.context.send_activity(
-            #         MessageFactory.attachment(
-            #             user_profile.picture, "This is your profile picture."
-            #         )
-            #     )
-            # else:
-            #     await step_context.context.send_activity(
-            #         "A profile picture was saved but could not be displayed here."
-            #     )
         else:
-            await step_context.context.send_activity(
-                MessageFactory.text("Thanks. Not providing query.")
+            return await step_context.prompt(
+                ConfirmPrompt.__name__,
+                PromptOptions(prompt=MessageFactory.text("Do you want to enter your query again?")),
             )
+    async def handle_query_again(self, step_context: WaterfallStepContext) -> DialogTurnResult:
+        if not step_context.values["satisfied"]:
+            query_another = step_context.result
+            if query_another: #modify -> 回到query_step
+                return await step_context.replace_dialog(self.initial_dialog_id)
+            else:         
+                return await step_context.prompt(
+                ConfirmPrompt.__name__,
+                PromptOptions(prompt=MessageFactory.text("Do you want to search for another podcast program?")),
+                )
+        else:
+            step_context.values["search_another"] = step_context.result
+            return await step_context.continue_dialog()
 
-        # WaterfallStep always finishes with the end of the Waterfall or with another
-        # dialog, here it is the end.
-        return await step_context.end_dialog()
+    async def final_step(self, step_context: WaterfallStepContext) -> DialogTurnResult:
+        if step_context.values["satisfied"]:
+            search_another = step_context.values["search_another"]
+        else: 
+            search_another = step_context.result
+            
+        if search_another:
+            return await step_context.replace_dialog(self.initial_dialog_id)
+        else:
+            await step_context.context.send_activity(MessageFactory.text('Thank you~'))
+            return await step_context.end_dialog()
