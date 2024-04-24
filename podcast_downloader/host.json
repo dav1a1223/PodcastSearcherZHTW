@@ -1,5 +1,11 @@
 {
   "version": "2.0",
+  "retry": {
+    "strategy": "exponentialBackoff",
+    "maxRetryCount": 0,
+    "minimumInterval": "00:00:10",
+    "maximumInterval": "00:05:00"
+  },
   "logging": {
     "applicationInsights": {
       "samplingSettings": {
@@ -11,5 +17,15 @@
   "extensionBundle": {
     "id": "Microsoft.Azure.Functions.ExtensionBundle",
     "version": "[4.*, 5.0.0)"
+    
+  },
+  "extensions": {
+    "queues": {
+      "batchSize": 1,
+      "maxPollingInterval": "00:00:05",
+      "visibilityTimeout": "00:00:30",
+      "maxDequeueCount": 5,
+      "newBatchThreshold": 1
+    }
   }
 }
