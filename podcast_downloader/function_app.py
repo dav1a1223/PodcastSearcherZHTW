@@ -57,32 +57,33 @@ def upload_rss_entity_to_blob(connection_string, container_name, blob_name, podc
             queue_client = QueueClient.from_connection_string(connection_string, queue_name="blob_queue")
             message = {"blob_name": blob_name, "container_name": container_name}
             queue_client.send_message(json.dumps(message))
-            print(f"Successfully uploaded '{blob_name}' to Azure Blob Storage.")
+            logging.info(f"Successfully uploaded '{blob_name}' to Azure Blob Storage.")
         else:
-            print(f"Failed to download podcast from URL '{podcast_url}'. HTTP status code: {response.status_code}")
+            logging.info(f"Failed to download podcast from URL '{podcast_url}'. HTTP status code: {response.status_code}")
 
     except Exception as e:
-        print(f"Failed to upload '{blob_name}' to Azure Blob Storage. Error: {e}")
+        logging.info(f"Failed to upload '{blob_name}' to Azure Blob Storage. Error: {e}")
 def get_downloaded_status(connection_string, container_name, prefix):
     try:
-       
         blob_name = f"{prefix}.json"
         blob_service_client = BlobServiceClient.from_connection_string(connection_string)
         container_client = blob_service_client.get_container_client(container_name)
         blob_client = container_client.get_blob_client(blob=blob_name)
-
+        download_status = {}
         download_status_json = blob_client.download_blob().readall()
         if not download_status_json:
             logging.info(f"Status file {blob_name} is empty.")
-            return {} 
+
         else:
             download_status = json.loads(download_status_json)
+            logging.info(f"download_status：{download_status}")
+ 
     except Exception as e:
         logging.error(f"Failed to download or parse the status file {blob_name}: {e}")
-        download_status = {}
-    
-    return download_status
 
+    return download_status
+    
+    
 def update_downloaded_status(connection_string, container_name, title, new_status, latest_guid):
     try:
         blob_name = f"{extract_prefix(title)}.json"
@@ -180,14 +181,16 @@ def extract_prefix(blob_name):
         return ""
     
 def extract_title(full_title):
-    # 使用正则表达式寻找特定模式的文本
-    match = re.search(r'\] (EP\d+ .+)$', full_title)
+    match = re.search(r'】\s+(.+)$', full_title)
+    logging.info(f"title：{full_title}")
+    logging.info(f"match：{match}")
     if match:
-        # 返回匹配的部分，即从 'EP' 开始到字符串结束的部分
         return match.group(1)
     else:
         return "No title found"
-
+def sanitize_filename(filename):
+    # 移除或替換Windows文件名中的非法字符
+    return re.sub(r'[\<\>:"/\\|?*]', '', filename)
 
 @app.schedule(schedule="0 0 2 * * *", arg_name="myTimer", run_on_startup=False, use_monitor=False)
 def timer_trigger(myTimer: func.TimerRequest, context: func.Context) -> None:
@@ -214,7 +217,6 @@ def timer_trigger(myTimer: func.TimerRequest, context: func.Context) -> None:
         feed = feedparser.parse(rss_url) 
         blob_name_prefix = extract_prefix(prefix)
         container_client = blob_service_client.get_container_client(container_name)
-        blob_client = container_client.get_blob_client(blob=blob_name_prefix)
         download_status = get_downloaded_status(connection_string, container_name, blob_name_prefix)
         if not download_status:  # 第一次下載這
             episodes_batches = feed.entries[1:2]   # 下載 10 集
@@ -224,6 +226,7 @@ def timer_trigger(myTimer: func.TimerRequest, context: func.Context) -> None:
                 # 只下載最新的一集
                 podcast_url = feed.entries[0].enclosures[0]["href"]
                 blob_name = f"{prefix} {feed.entries[0].title}.mp3" 
+                blob_name  = sanitize_filename(blob_name)
                 logging.info(f"Downloading {podcast_url} to {blob_name}...")
                 upload_rss_entity_to_blob(connection_string, "audiofiles", blob_name, podcast_url)
 
@@ -264,6 +267,7 @@ def queue_trigger(azqueue: func.QueueMessage):
         if entry:
             podcast_url = entry.enclosures[0]["href"]
             blob_name = f"{prefix} {entry.title}.mp3" 
+            blob_name  = sanitize_filename(blob_name)
             try:
                 response = requests.get(podcast_url, stream=True)  # 使用 stream 参数確保不會立即下載所有
                 if response.status_code == 200:
@@ -280,7 +284,7 @@ def queue_trigger(azqueue: func.QueueMessage):
 
 
 
-@app.queue_trigger(arg_name="myqueue", queue_name="blob_queue",
+@app.queue_trigger(arg_name="myqueue", queue_name="blob-queue",
                                connection="podcastzhtw") 
 def queue_trigger2(myqueue: func.QueueMessage):
     message = json.loads(myqueue.get_body().decode('utf-8'))
@@ -344,7 +348,7 @@ def queue_trigger2(myqueue: func.QueueMessage):
         conn.close()
 
     except Exception as e:
-        print("[Errno {0}] {1}".format(e.errno, e.strerror))
+        logging.info("[Errno {0}] {1}".format(e.errno, e.strerror))
 
 @app.blob_trigger(arg_name="myblob", path="transcription",
                                connection="podcastzhtw_STORAGE") 
@@ -386,10 +390,13 @@ def blob_trigger(myblob: func.InputStream):
         title_end = source_url.find(".mp3")
         title_encoded = source_url[title_start:title_end]
         title_decoded = unquote(title_encoded)
+        logging.info(f"Decoded title: '{title_decoded}'")
         download_status = get_downloaded_status(connect_str, "podcasts", extract_prefix(title_decoded))
-        logging(f"status：{download_status[extract_title(title_decoded)].get('status')}")
-        if extract_title(title_decoded) in download_status and download_status[extract_title(title_decoded)].get('status') == 'Succeeded':
-            logging(f"Status for '{title}' is 'Succeeded'. No further action required.")
+        extracted_title = extract_title(title_decoded)
+        logging.info(f"extract_title：{extracted_title}")
+        logging(f"status：{download_status[extracted_title].get('status')}")
+        if extracted_title in download_status and download_status[extracted_title].get('status') == 'Succeeded':
+            logging(f"Status for '{title_decoded}' is 'Succeeded'. No further action required.")
             return 
     except KeyError as e:
         logging.error(f"Key error when processing JSON content: {e}")
@@ -413,10 +420,9 @@ def blob_trigger(myblob: func.InputStream):
         blob_client = container_client.get_blob_client(f"{title_decoded}.txt")
 
         blob_client.upload_blob(text, blob_type="BlockBlob", overwrite=True)      
-        update_downloaded_status(blob_service_client, "podcasts",  title_decoded, "Succeeded", "")
+        update_downloaded_status(connect_str, "podcasts",  title_decoded, "Succeeded", "")
         logging.info(f"Successfully uploaded {title_decoded}.txt to container {container_name}.")
 
     except Exception as e:
         logging.error(f"Failed to upload blob: {e}")
         raise
-
