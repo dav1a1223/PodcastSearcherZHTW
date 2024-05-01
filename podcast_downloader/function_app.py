@@ -115,6 +115,12 @@ def update_downloaded_status(connection_string, container_name, title, new_statu
         logging.info(f"Successfully updated the status for episode {title} to {new_status} in {blob_name}.")
     except Exception as e:
         logging.error(f"Failed to update the download status in Blob Storage for {blob_name}: {e}")
+def check_not_downloaded_episodes(status, entries):
+    download_entry = []
+    for entry in entries:
+        if(status[extract_title(sanitize_filename(entry.title))] == 'not_downloaded'):
+            download_entry.append(entry)
+    return download_entry
 
 
 
@@ -189,7 +195,6 @@ def extract_title(full_title):
     else:
         return "No title found"
 def sanitize_filename(filename):
-    # 移除或替換Windows文件名中的非法字符
     return re.sub(r'[\<\>:"/\\|?*]', '', filename)
 
 @app.schedule(schedule="0 0 2 * * *", arg_name="myTimer", run_on_startup=False, use_monitor=False)
@@ -227,8 +232,9 @@ def timer_trigger(myTimer: func.TimerRequest, context: func.Context) -> None:
                 podcast_url = feed.entries[0].enclosures[0]["href"]
                 blob_name = f"{prefix} {feed.entries[0].title}.mp3" 
                 blob_name  = sanitize_filename(blob_name)
-                logging.info(f"Downloading {podcast_url} to {blob_name}...")
-                upload_rss_entity_to_blob(connection_string, "audiofiles", blob_name, podcast_url)
+                update_downloaded_status(connection_string, container_name, blob_name, "not_downloaded", latest_guid)
+                episodes_batches = check_not_downloaded_episodes(download_status, feed.entries)
+                logging.info(f"not_downloaded Episodes batches to process: {len(episodes_batches)}")
 
         logging.info(f"Episodes batches to process: {len(episodes_batches)}")
         if episodes_batches:
@@ -393,10 +399,12 @@ def blob_trigger(myblob: func.InputStream):
         logging.info(f"Decoded title: '{title_decoded}'")
         download_status = get_downloaded_status(connect_str, "podcasts", extract_prefix(title_decoded))
         extracted_title = extract_title(title_decoded)
+        extracted_title = sanitize_filename(extracted_title)
         logging.info(f"extract_title：{extracted_title}")
-        logging(f"status：{download_status[extracted_title].get('status')}")
+        logging.info(f"status：{download_status[extracted_title].get('status')}")
+        
         if extracted_title in download_status and download_status[extracted_title].get('status') == 'Succeeded':
-            logging(f"Status for '{title_decoded}' is 'Succeeded'. No further action required.")
+            logging.info(f"Status for '{title_decoded}' is 'Succeeded'. No further action required.")
             return 
     except KeyError as e:
         logging.error(f"Key error when processing JSON content: {e}")

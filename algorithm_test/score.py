@@ -29,64 +29,51 @@ class TextProcessor:
             text = f.read()
         return text
     
-    def calculate_tfidf(self):
-    # Tokenize documents
-        tokenized_docs = [doc.split() for doc in self.documents]
+    def calculate_tfidf(self, file_path='tf_idf.json'):
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    tfidf_scores = json.load(f)
+            except FileNotFoundError:
+                tfidf_scores = {}
 
-        # Compute term frequency (TF) for each term in each document
-        tf = []
-        for doc in tokenized_docs:
-            tf_doc = defaultdict(int)
-            for term in doc:
-                tf_doc[term] += 1
-            tf.append(tf_doc)
+            # Calculate document frequency (DF) for each word
+            df = Counter()
+            for document in self.documents:
+                words = document.split()
+                unique_words = set(words)
+                for word in unique_words:
+                    df[word] += 1
 
-        # Compute document frequency (DF) for each term
-        df = defaultdict(int)
-        for doc in tf:
-            for term in doc:
-                df[term] += 1
+            N = len(self.documents)
 
-        # Compute inverse document frequency (IDF) for each term
-        num_docs = len(tokenized_docs)
-        idf = {term: math.log(num_docs / (df[term] + 1)) for term in df}
+            # Calculate inverse document frequency (IDF) for each word
+            idf = {word: math.log((N / df[word]), 10) for word in df}
 
-        # Compute TF-IDF scores
-        tfidf = {}
-        for i, doc in enumerate(tokenized_docs):
-            doc_scores = []
-            highest_score = {"document_id": "", "score": 0.0}
-            for term in doc:
-                score = tf[i][term] * idf[term]
-                doc_scores.append({
-                    "document_id": self.document_ids[i],
-                    "score": format(score, '.4f')
-                })
-                if score > highest_score["score"]:
-                    highest_score = {
-                        "document_id": self.document_ids[i],
-                        "score": score  
-                    }
-            for term in doc:  # 使用每個 term 作為鍵存儲 TF-IDF 分數
-                if doc_scores:
-                    if term not in tfidf:
-                        tfidf[term] = {
-                            "scores": doc_scores,
-                            "highest": {
-                                "document_id": highest_score["document_id"],
-                                "score": format(highest_score["score"], '.4f') 
-                            }
-                        }
-                    else:
-                        tfidf[term]["scores"].extend(doc_scores)
-                        if highest_score["score"] > float(tfidf[term]["highest"]["score"]):
-                            tfidf[term]["highest"]["document_id"] = highest_score["document_id"]
-                            tfidf[term]["highest"]["score"] = format(highest_score["score"], '.4f')
-        self.save_tf_idf(tfidf)
-        return tfidf
+            # Initialize data structure
+            word_scores = {word: {"scores": [], "highest": {"document_id": "", "score": 0}} for word in df}
 
+            # Calculate and store TF-IDF scores for each document
+            for doc_id, document in zip(self.document_ids, self.documents):
+                words = document.split()
+                term_freq = Counter(words)
+                doc_scores = {}
 
-    def save_tf_idf(self, tfidf, file_path='tfidf.json'):
+                for word, freq in term_freq.items():
+                    tf = freq / len(words)  # Calculate term frequency (TF)
+                    tf_idf_value = tf * idf[word]  # Calculate TF-IDF
+                    score_formatted = format(tf_idf_value, '.4f')  # Format TF-IDF value
+                    doc_scores[word] = score_formatted  # Store formatted TF-IDF value
+
+                    # Store in word_scores and check if it's the highest score
+                    score_entry = {"document_id": doc_id, "score": score_formatted}
+                    word_scores[word]["scores"].append(score_entry)
+                    if float(score_formatted) > float(word_scores[word]["highest"]["score"]):
+                        word_scores[word]["highest"] = score_entry
+
+            # Save the calculated TF-IDF scores
+            self.save_tf_idf(word_scores, file_path)
+
+    def save_tf_idf(self, tfidf, file_path):
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 existing_data = json.load(f)
@@ -94,9 +81,9 @@ class TextProcessor:
             existing_data = {}
 
         existing_data.update(tfidf)
-
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(existing_data, f, ensure_ascii=False, indent=4)
+
     def calculate_bm25(self, k1=1.25, b=0.75, file_path='bm25.json'):
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -116,19 +103,15 @@ class TextProcessor:
                 df[word] += 1
 
         # Calculate inverse document frequency (IDF) for each word
-        idf = {word: math.log((N - df[word] + 0.5) / (df[word] + 0.5)) for word in df}
+        idf = {word: math.log((N + 1) / (df[word] + 0.5)) for word in df}
 
         # Calculate BM25 scores for each document
         for doc_id, document in zip(self.document_ids, self.documents):
-            if doc_id in bm25_scores:
-                doc_length = float(bm25_scores[doc_id])
-                scores = bm25_scores[doc_id].get('scores', [])
-                freqs = {item['word']: item['freq'] for item in scores if 'freq' in item and 'word' in item}
-            else:
-                doc_length = len(document.split())
-                freqs = Counter(document.split())
-                bm25_scores[doc_id] = doc_length 
-           
+            doc_length = doc_lengths[doc_id]
+            freqs = Counter(document.split())
+
+            if doc_id not in bm25_scores:
+                bm25_scores[doc_id] = {'scores': []}
 
             for word, freq in freqs.items():
                 if word not in bm25_scores:
@@ -138,13 +121,15 @@ class TextProcessor:
                     score = idf[word] * (freq * (k1 + 1)) / (freq + k1 * (1 - b + b * doc_length / avgdl))
                     score_formatted = format(score, '.4f')
 
-                    bm25_scores[word]["scores"].append({"document_id": doc_id, "freq": freq, "score": score_formatted})
+                    score_entry = {"document_id": doc_id, "freq": freq, "score": score_formatted}
+                    bm25_scores[word]["scores"].append(score_entry)
 
                     if float(score_formatted) > float(bm25_scores[word]["highest"]["score"]):
-                        bm25_scores[word]["highest"] = {"document_id": doc_id, "score": score_formatted}
+                        bm25_scores[word]["highest"] = score_entry
 
         # Save the calculated BM25 scores
         self.save_bm25_scores(bm25_scores, file_path)
+
 
     def save_bm25_scores(self, bm25_scores, file_path='bm25.json'):
         with open(file_path, 'w', encoding='utf-8') as f:
@@ -153,8 +138,9 @@ class TextProcessor:
 
 processor = TextProcessor()
 processor.process_folder("transcrips") 
-
+processor.calculate_tfidf()
 print("tf-idf 分析结果已保存至 tf-idf.json。")
 processor.calculate_bm25()
+print("bm25 分析结果已保存至 bm25.json。")
 
 
