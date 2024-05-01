@@ -23,7 +23,9 @@ def generate_results_json(queries, processor, top_ns):
 
     results = {
         "tf-idf": [],
-        "bm25": []
+        "bm25": [],
+        "tf-idf_all_terms": [],
+        "bm25_all_terms": []
     }
     
     with open('bm25.json', 'r', encoding='utf-8') as f:
@@ -40,6 +42,8 @@ def generate_results_json(queries, processor, top_ns):
     for query in queries:
         tf_idf_results = {}
         bm25_results = {}
+        tf_idf_all_terms_results = {}
+        bm25_all_terms_results = {}
         query_type = query["type"]
         query_data = query["data"]
         query_name = query_type  
@@ -48,8 +52,12 @@ def generate_results_json(queries, processor, top_ns):
             print(f"Processing {query_type} for top {top_n}")
             tf_idf_accuracy = calculate_accuracy(tf_idf_data, query_data, query_tf_idf_document, processor, top_n)
             bm25_accuracy = calculate_accuracy(bm25_data, query_data, query_bm25_document, processor, top_n)
+            tf_idf_all_terms_accuracy = calculate_accuracy(tf_idf_data, query_data, query_tf_idf_document_all_terms, processor, top_n)
+            bm25_all_terms_accuracy = calculate_accuracy(bm25_data, query_data, query_bm25_document_all_terms, processor, top_n)
             tf_idf_results[f"P{top_n}"] = tf_idf_accuracy
             bm25_results[f"P{top_n}"] = bm25_accuracy
+            tf_idf_all_terms_results[f"P{top_n}"] = tf_idf_all_terms_accuracy
+            bm25_all_terms_results[f"P{top_n}"] = bm25_all_terms_accuracy
 
         results["tf-idf"].append({
             "query": query_name,
@@ -58,6 +66,14 @@ def generate_results_json(queries, processor, top_ns):
         results["bm25"].append({
             "query": query_name,
             **bm25_results
+        })
+        results["tf-idf_all_terms"].append({
+            "query": query_name,
+            **tf_idf_all_terms_results
+        })
+        results["bm25_all_terms"].append({
+            "query": query_name,
+            **bm25_all_terms_results
         })
 
     save_accuracies_to_json(results)
@@ -79,7 +95,7 @@ def load_query_data(file_path):
 def calculate_accuracy(data, queries, query_function, processor, top_n):
     correct_predictions = 0
     for query_terms, correct_doc_id in queries:
-        predicted_doc_ids = query_function(data, processor, ' '.join(query_terms), top_n=top_n)
+        predicted_doc_ids = query_function(data, processor, ' '.join(query_terms), top_n)
         if predicted_doc_ids is None:
             cleaned_predicted_doc_ids = []
         else:
@@ -117,22 +133,15 @@ def query_tf_idf_document(data, processor, sentence, top_n):
     return [doc[0] for doc in top_docs]
 
 
-def query_tf_idf_document_all_terms(processor, sentence, top_n):
+def query_tf_idf_document_all_terms(data, processor, sentence, top_n):
     terms = processor.word_segmentation(sentence)
-    try:
-        with open('tf_idf.json', 'r', encoding='utf-8') as f:
-            tf_idf_data = json.load(f)
-    except FileNotFoundError:
-        print("未找到tf-idf.json文件。")
-        return None
-
     doc_scores_sum = {}
     term_count = {}
     query_results = {}
 
     for term in terms:
-        if term in tf_idf_data:
-            scores = tf_idf_data[term]['scores']
+        if term in data:
+            scores = data[term]['scores']
             query_results[term] = scores
             for score_info in scores:
                 doc_id = score_info['document_id']
@@ -145,7 +154,8 @@ def query_tf_idf_document_all_terms(processor, sentence, top_n):
                     term_count[doc_id] = 1
 
    
-    top_docs = sorted(term_count.keys(), key=lambda x: (-term_count[x], -doc_scores_sum[x]))
+    top_docs = sorted(term_count.keys(), key=lambda x: (-term_count[x], -doc_scores_sum[x]))[:top_n]
+    return top_docs
     #print("该 term 的各文檔分數：")
     #print(json.dumps(query_results, ensure_ascii=False, indent=4))
     return [doc[0] for doc in top_docs]
@@ -153,8 +163,6 @@ def query_tf_idf_document_all_terms(processor, sentence, top_n):
 
 def query_bm25_document(data, processor, sentence, top_n):
     terms = processor.word_segmentation(sentence)
-    
-
     
     doc_scores_sum = {}
     query_results = {}
@@ -183,6 +191,30 @@ except FileNotFoundError:
 def save_accuracies_to_json(accuracies, filename="precision.json"):
     with open(filename, 'w', encoding='utf-8') as f:
         json.dump(accuracies, f, ensure_ascii=False, indent=4)
+
+def query_bm25_document_all_terms(data, processor, sentence, top_n):
+    terms = processor.word_segmentation(sentence)
+    doc_scores_sum = {}
+    term_count = {}
+    query_results = {}
+
+    for term in terms:
+        if term in data:
+            scores = data[term]['scores']
+            query_results[term] = scores
+            for score_info in scores:
+                doc_id = score_info['document_id']
+                score = float(score_info['score'])
+                if doc_id in doc_scores_sum:
+                    doc_scores_sum[doc_id] += score
+                    term_count[doc_id] += 1  # Keep track of how many terms contribute to this doc's score
+                else:
+                    doc_scores_sum[doc_id] = score
+                    term_count[doc_id] = 1
+
+    # Sort documents based on the number of terms contributing and the sum of their BM25 scores
+    top_docs = sorted(term_count.keys(), key=lambda x: (-term_count[x], -doc_scores_sum[x]))[:top_n]
+    return top_docs
 
 processor = TextProcessor("stopwords.txt")
 #user_input = input("請輸入想要查詢的句子：")
