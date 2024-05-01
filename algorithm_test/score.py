@@ -85,11 +85,7 @@ class TextProcessor:
             json.dump(existing_data, f, ensure_ascii=False, indent=4)
 
     def calculate_bm25(self, k1=1.25, b=0.75, file_path='bm25.json'):
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                bm25_scores = json.load(f)
-        except FileNotFoundError:
-            bm25_scores = {}
+        bm25_scores = {}
 
         # Calculate document lengths and average document length
         doc_lengths = {doc_id: len(doc.split()) for doc_id, doc in zip(self.document_ids, self.documents)}
@@ -110,9 +106,6 @@ class TextProcessor:
             doc_length = doc_lengths[doc_id]
             freqs = Counter(document.split())
 
-            if doc_id not in bm25_scores:
-                bm25_scores[doc_id] = {'scores': []}
-
             for word, freq in freqs.items():
                 if word not in bm25_scores:
                     bm25_scores[word] = {"scores": [], "highest": {"document_id": "", "score": 0.0}}
@@ -122,7 +115,13 @@ class TextProcessor:
                     score_formatted = format(score, '.4f')
 
                     score_entry = {"document_id": doc_id, "freq": freq, "score": score_formatted}
-                    bm25_scores[word]["scores"].append(score_entry)
+                    existing_entry = next((item for item in bm25_scores[word]["scores"] if item["document_id"] == doc_id), None)
+                    if existing_entry:
+                        existing_entry['score'] = score_formatted  # Update score
+                        existing_entry['freq'] = freq  # Update frequency
+                    else:
+                        bm25_scores[word]["scores"].append(score_entry)  # Append new entry
+
 
                     if float(score_formatted) > float(bm25_scores[word]["highest"]["score"]):
                         bm25_scores[word]["highest"] = score_entry
