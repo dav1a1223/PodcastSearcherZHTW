@@ -84,7 +84,7 @@ class TextProcessor:
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(existing_data, f, ensure_ascii=False, indent=4)
 
-    def calculate_bm25(self, k1=1.25, b=0.75, file_path='bm25.json'):
+    def calculate_bm25(self, k1=2.2, b=1.2, file_path='bm25.json'):
         bm25_scores = {}
 
         # Calculate document lengths and average document length

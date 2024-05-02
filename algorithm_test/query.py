@@ -2,6 +2,7 @@ import json
 import jieba
 import re
 class TextProcessor:
+    
     def __init__(self, stopwords_file="stopwords.txt"):
         self.stopwords = self.get_stopwords(stopwords_file)
 
@@ -27,13 +28,13 @@ def generate_results_json(queries, processor, top_ns):
         "tf-idf_all_terms": [],
         "bm25_all_terms": []
     }
-    
+    query_errors = []
     with open('bm25.json', 'r', encoding='utf-8') as f:
             bm25_data = json.load(f)
     
     with open('tf_idf.json', 'r', encoding='utf-8') as f:
             tf_idf_data = json.load(f)
-    # 循环处理每个查询
+
     queries = [
     {"type": "transcripts", "data": queries['transcripts']},
     {"type": "timecode", "data": queries['timecode']},
@@ -46,14 +47,19 @@ def generate_results_json(queries, processor, top_ns):
         bm25_all_terms_results = {}
         query_type = query["type"]
         query_data = query["data"]
-        query_name = query_type  
+        query_name = query_type 
+       
+ 
 
         for top_n in top_ns:
             print(f"Processing {query_type} for top {top_n}")
+            query_data = [([term.upper() for term in query_terms if isinstance(term, str)], doc_id) for query_terms, doc_id in query_data]
+
             tf_idf_accuracy = calculate_accuracy(tf_idf_data, query_data, query_tf_idf_document, processor, top_n)
             bm25_accuracy = calculate_accuracy(bm25_data, query_data, query_bm25_document, processor, top_n)
-            tf_idf_all_terms_accuracy = calculate_accuracy(tf_idf_data, query_data, query_tf_idf_document_all_terms, processor, top_n)
-            bm25_all_terms_accuracy = calculate_accuracy(bm25_data, query_data, query_bm25_document_all_terms, processor, top_n)
+            tf_idf_all_terms_accuracy= calculate_accuracy(tf_idf_data, query_data, query_tf_idf_document_all_terms, processor, top_n)
+            bm25_all_terms_accuracy= calculate_accuracy(bm25_data, query_data, query_bm25_document_all_terms, processor, top_n)
+            
             tf_idf_results[f"P{top_n}"] = tf_idf_accuracy
             bm25_results[f"P{top_n}"] = bm25_accuracy
             tf_idf_all_terms_results[f"P{top_n}"] = tf_idf_all_terms_accuracy
@@ -108,7 +114,6 @@ def calculate_accuracy(data, queries, query_function, processor, top_n):
     return accuracy
 
 
-
 def query_tf_idf_document(data, processor, sentence, top_n):
     terms = processor.word_segmentation(sentence)
     tf_idf_data  = data
@@ -161,32 +166,47 @@ def query_tf_idf_document_all_terms(data, processor, sentence, top_n):
     return [doc[0] for doc in top_docs]
 
 
+import jieba
+
 def query_bm25_document(data, processor, sentence, top_n):
-    terms = processor.word_segmentation(sentence)
-    
+    high_weight_terms = sentence.split(',')
+    terms_processed = set() 
+
     doc_scores_sum = {}
-    query_results = {}
 
-    for term in terms:
-        if term in data:
-            scores = data[term]['scores']
-            query_results[term] = scores
-            for score_info in scores:
-                doc_id = score_info['document_id']
-                score = float(score_info['score'])
-                if doc_id in doc_scores_sum:
-                    doc_scores_sum[doc_id] += score
-                else:
-                    doc_scores_sum[doc_id] = score
-    
+    for term in high_weight_terms:
+        term = term.strip()  
+        if term and term not in terms_processed:
+            terms_processed.add(term) 
+            if term in data:
+                scores = data[term]['scores']
+                for score_info in scores:
+                    doc_id = score_info['document_id']
+                    score = float(score_info['score'])  * 2
+                    if doc_id in doc_scores_sum:
+                        doc_scores_sum[doc_id] += score
+                    else:
+                        doc_scores_sum[doc_id] = score
+
+        segmented_terms = processor.word_segmentation(term)
+        for seg_term in segmented_terms:
+            seg_term = seg_term.strip()
+            if seg_term and seg_term not in terms_processed:
+                terms_processed.add(seg_term) 
+                if seg_term in data:
+                    scores = data[seg_term]['scores']
+                    for score_info in scores:
+                        doc_id = score_info['document_id']
+                        score = float(score_info['score'])  
+                        if doc_id in doc_scores_sum:
+                            doc_scores_sum[doc_id] += score
+                        else:
+                            doc_scores_sum[doc_id] = score
+
     top_docs = sorted(doc_scores_sum.items(), key=lambda x: x[1], reverse=True)[:top_n]
-    return [doc[0] for doc in top_docs]
+    selected_docs = [doc[0] for doc in top_docs]
+    return selected_docs
 
-try:
-    with open('bm25.json', 'r', encoding='utf-8') as f:
-        bm25_data = json.load(f)
-except FileNotFoundError:
-    print("未找到bm25.json文件。")
 
 def save_accuracies_to_json(accuracies, filename="precision.json"):
     with open(filename, 'w', encoding='utf-8') as f:
@@ -227,6 +247,6 @@ queries = {
     "dcard": load_query_data("dcard.txt")
 }
 top_ns = [1, 3, 5]
-
+jieba.set_dictionary('dict.txt.big.txt')
 # 生成和保存结果
 generate_results_json(queries, processor, top_ns)
