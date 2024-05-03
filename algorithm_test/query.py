@@ -15,6 +15,11 @@ class TextProcessor:
         return stopword_list
 
     def word_segmentation(self, text, need_remove_stopwords=True):
+        lines = text.strip().split('\n')
+        processed_lines = [''.join(line.split()) for line in lines]  # Remove spaces from each line
+        combined_text = ' '.join(processed_lines)  # Combine lines back with space to tokenize properly
+
+        # 使用 Jieba 進行斷詞
         seg_list = jieba.lcut(text)
         if need_remove_stopwords:
             seg_list = [word for word in seg_list if word not in self.stopwords and word.strip()]
@@ -49,13 +54,12 @@ def generate_results_json(queries, processor, top_ns):
         query_data = query["data"]
         query_name = query_type 
        
- 
+        errors = []
 
         for top_n in top_ns:
             print(f"Processing {query_type} for top {top_n}")
             query_data = [([term.upper() for term in query_terms if isinstance(term, str)], doc_id) for query_terms, doc_id in query_data]
-
-            tf_idf_accuracy = calculate_accuracy(tf_idf_data, query_data, query_tf_idf_document, processor, top_n)
+            tf_idf_accuracy= calculate_accuracy(tf_idf_data, query_data, query_tf_idf_document, processor, top_n)
             bm25_accuracy = calculate_accuracy(bm25_data, query_data, query_bm25_document, processor, top_n)
             tf_idf_all_terms_accuracy= calculate_accuracy(tf_idf_data, query_data, query_tf_idf_document_all_terms, processor, top_n)
             bm25_all_terms_accuracy= calculate_accuracy(bm25_data, query_data, query_bm25_document_all_terms, processor, top_n)
@@ -83,12 +87,15 @@ def generate_results_json(queries, processor, top_ns):
         })
 
     save_accuracies_to_json(results)
+    #save_errors_to_json(errors, "errors.json")
 
 def extract_ep_numbers(document_ids):
     pattern = r"EP(\d+)"
     extracted_numbers = [re.search(pattern, doc_id).group(1) if re.search(pattern, doc_id) else None for doc_id in document_ids]
     return extracted_numbers
-    
+
+def adjust_doc_id_format(doc_id):
+    return f"EP{doc_id}" if doc_id.isdigit() else doc_id   
 def load_query_data(file_path):
     queries = []
     with open(file_path, 'r', encoding='utf-8') as file:
@@ -100,19 +107,36 @@ def load_query_data(file_path):
 
 def calculate_accuracy(data, queries, query_function, processor, top_n):
     correct_predictions = 0
+    error_list = []
     for query_terms, correct_doc_id in queries:
         predicted_doc_ids = query_function(data, processor, ' '.join(query_terms), top_n)
+        #formatted_correct_doc_id = f"EP{correct_doc_id} "
+        #formatted_correct_doc_id = next((doc_id for doc_id in term_scores.keys() if doc_id.startswith(formatted_correct_doc_id)), None)
+
         if predicted_doc_ids is None:
             cleaned_predicted_doc_ids = []
         else:
             cleaned_predicted_doc_ids = extract_ep_numbers(predicted_doc_ids)
         if correct_doc_id in cleaned_predicted_doc_ids:
             correct_predictions += 1
+        '''else:
+            errors = {doc_id: term_scores.get(doc_id, []) for doc_id in predicted_doc_ids}
+            correct_details = term_scores.get(formatted_correct_doc_id, [])
+            error_list.append({
+                "query": query_terms,
+                "predicted": predicted_doc_ids,
+                "correct": adjust_doc_id_format(correct_doc_id),
+                "details": errors,
+                "correct_details": correct_details
+            })'''
     
     accuracy = correct_predictions / len(queries)
     print(f"Top {top_n} accuracy: {accuracy}")
     return accuracy
 
+def save_errors_to_json(errors, filename):
+    with open(filename, 'w', encoding='utf-8') as f:
+        json.dump(errors, f, ensure_ascii=False, indent=4)
 
 def query_tf_idf_document(data, processor, sentence, top_n):
     terms = processor.word_segmentation(sentence)
@@ -120,7 +144,7 @@ def query_tf_idf_document(data, processor, sentence, top_n):
 
     doc_scores_sum = {}
     query_results = {}
-
+    
     for term in terms:
         if term in tf_idf_data:
             scores = tf_idf_data[term]['scores']
@@ -130,8 +154,11 @@ def query_tf_idf_document(data, processor, sentence, top_n):
                 score = float(score_info['score'])
                 if doc_id in doc_scores_sum:
                     doc_scores_sum[doc_id] += score
+                    query_results.setdefault(doc_id, []).append((term, score))
                 else:
                     doc_scores_sum[doc_id] = score
+                    query_results[doc_id] = [(term, score)]
+                    
     #print("該 term 的各文檔分數：")
     #print(json.dumps(query_results, ensure_ascii=False, indent=4))
     top_docs = sorted(doc_scores_sum.items(), key=lambda x: x[1], reverse=True)[:top_n]
@@ -165,8 +192,6 @@ def query_tf_idf_document_all_terms(data, processor, sentence, top_n):
     #print(json.dumps(query_results, ensure_ascii=False, indent=4))
     return [doc[0] for doc in top_docs]
 
-
-import jieba
 
 def query_bm25_document(data, processor, sentence, top_n):
     high_weight_terms = sentence.split(',')
@@ -247,6 +272,7 @@ queries = {
     "dcard": load_query_data("dcard.txt")
 }
 top_ns = [1, 3, 5]
-jieba.set_dictionary('dict.txt.big.txt')
+
+jieba.load_userdict('jieba_dict.txt') 
 # 生成和保存结果
 generate_results_json(queries, processor, top_ns)

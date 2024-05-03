@@ -12,6 +12,8 @@ class TextProcessor:
     def __init__(self):
         self.documents = []
         self.document_ids = []
+        self.vocabulary = set()
+        jieba.set_dictionary('dict.txt.big.txt')
 
     def process_folder(self, folder_path):
         output_folder_path = os.path.join(os.getcwd(), 'transcrips')
@@ -23,6 +25,12 @@ class TextProcessor:
                 text = self.get_transcript(full_path)
                 self.documents.append(text)
                 self.document_ids.append(filename)
+                self.update_vocabulary(text)
+
+    def update_vocabulary(self, text):
+
+        words = jieba.cut_for_search(text)
+        self.vocabulary.update(words)
 
     def get_transcript(self, file):
         with open(file, 'r', encoding='utf-8') as f:
@@ -47,7 +55,7 @@ class TextProcessor:
             N = len(self.documents)
 
             # Calculate inverse document frequency (IDF) for each word
-            idf = {word: math.log((N / df[word]), 10) for word in df}
+            idf = {word: math.log((N + 1) / (df[word] + 1), 10) + 1 for word in df}
 
             # Initialize data structure
             word_scores = {word: {"scores": [], "highest": {"document_id": "", "score": 0}} for word in df}
@@ -61,7 +69,7 @@ class TextProcessor:
                 for word, freq in term_freq.items():
                     tf = freq / len(words)  # Calculate term frequency (TF)
                     tf_idf_value = tf * idf[word]  # Calculate TF-IDF
-                    score_formatted = format(tf_idf_value, '.4f')  # Format TF-IDF value
+                    score_formatted = format(tf_idf_value, '.6f')  # Format TF-IDF value
                     doc_scores[word] = score_formatted  # Store formatted TF-IDF value
 
                     # Store in word_scores and check if it's the highest score
@@ -134,6 +142,10 @@ class TextProcessor:
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(bm25_scores, f, ensure_ascii=False, indent=4)
 
+    def save_jieba_dictionary(self, file_path):
+        with open(file_path, 'w', encoding='utf-8') as f:
+            for word in self.vocabulary:
+                f.write(f"{word} 10000 \n")
 
 processor = TextProcessor()
 processor.process_folder("transcrips") 
@@ -141,5 +153,7 @@ processor.calculate_tfidf()
 print("tf-idf 分析结果已保存至 tf-idf.json。")
 processor.calculate_bm25()
 print("bm25 分析结果已保存至 bm25.json。")
+processor.save_jieba_dictionary("jieba_dict.txt")
+
 
 
