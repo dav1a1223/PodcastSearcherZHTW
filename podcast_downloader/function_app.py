@@ -90,15 +90,14 @@ def update_downloaded_status(connection_string, container_name, title, new_statu
         blob_service_client = BlobServiceClient.from_connection_string(connection_string)
         container_client = blob_service_client.get_container_client(container_name)
         blob_client = container_client.get_blob_client(blob_name)
-        title = extract_title(title)
+        title = extract_title(title).replace('.mp3', '')
+        logging.info(f"remove_mp3 title：{title}")
         try:
             current_status = json.loads(blob_client.download_blob().content_as_text())
         except Exception as e:
             logging.error(f"Failed to download existing status file {blob_name}: {e}")
-            return 
+            raise
 
-        if latest_guid != "":
-            current_status["latest_guid"] = latest_guid
         if title in current_status:
             current_status[title]['status'] = new_status
         else:
@@ -108,20 +107,27 @@ def update_downloaded_status(connection_string, container_name, title, new_statu
             }
             logging.info(f"Added new title {title} with status {new_status}.")
 
-            logging.error(f"Episode title {title} not found in the status file.")
-            return 
 
-        blob_client.upload_blob(json.dumps(current_status), overwrite=True)
+        blob_client.upload_blob(json.dumps(current_status).encode('utf-8'), overwrite=True)
         logging.info(f"Successfully updated the status for episode {title} to {new_status} in {blob_name}.")
     except Exception as e:
         logging.error(f"Failed to update the download status in Blob Storage for {blob_name}: {e}")
+        raise
 def check_not_downloaded_episodes(status, entries):
     download_entry = []
     for entry in entries:
-        if(status[extract_title(sanitize_filename(entry.title))] == 'not_downloaded'):
-            download_entry.append(entry)
-    return download_entry
+        try:
+            entry_status = status[sanitize_filename(entry.title)]
+            logging.info(f"Checking status for {entry.title}: {entry_status}")
+            
+            if entry_status == 'not_downloaded':
+                download_entry.append(entry)
+        except KeyError as e:
+            logging.error(f"Error accessing status for {entry.title}: {e}")
+        except Exception as e:
+            logging.error(f"Unexpected error while checking entries: {e}")
 
+    return download_entry
 
 
 def upload_text_to_blob(container_name, text_blob_name, text, connection_string):
@@ -194,6 +200,7 @@ def extract_title(full_title):
         return match.group(1)
     else:
         return "No title found"
+    
 def sanitize_filename(filename):
     return re.sub(r'[\<\>:"/\\|?*]', '', filename)
 
@@ -223,9 +230,9 @@ def timer_trigger(myTimer: func.TimerRequest, context: func.Context) -> None:
         blob_name_prefix = extract_prefix(prefix)
         container_client = blob_service_client.get_container_client(container_name)
         download_status = get_downloaded_status(connection_string, container_name, blob_name_prefix)
-        if not download_status:  # 第一次下載這
-            episodes_batches = feed.entries[1:2]   # 下載 10 集
-        else:
+        if not download_status: 
+            episodes_batches = feed.entries
+        else: # 第一次下載這
             latest_guid = feed.entries[0].get("guid")
             if download_status["latest_guid"] != latest_guid:    \
                 # 只下載最新的一集
@@ -237,6 +244,9 @@ def timer_trigger(myTimer: func.TimerRequest, context: func.Context) -> None:
                 logging.info(f"not_downloaded Episodes batches to process: {len(episodes_batches)}")
 
         logging.info(f"Episodes batches to process: {len(episodes_batches)}")
+        if(len(episodes_batches)) > 10:
+            logging.info(f"Episodes batches to process: {len(episodes_batches)}")
+            return
         if episodes_batches:
             latest_guid = episodes_batches[0].get("guid")
             for batch in episodes_batches:

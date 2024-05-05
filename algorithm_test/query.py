@@ -14,15 +14,8 @@ class TextProcessor:
                 stopword_list.append(line)
         return stopword_list
 
-    def word_segmentation(self, text, need_remove_stopwords=True):
-        lines = text.strip().split('\n')
-        processed_lines = [''.join(line.split()) for line in lines]  # Remove spaces from each line
-        combined_text = ' '.join(processed_lines)  # Combine lines back with space to tokenize properly
-
-        # 使用 Jieba 進行斷詞
-        seg_list = jieba.lcut(text)
-        if need_remove_stopwords:
-            seg_list = [word for word in seg_list if word not in self.stopwords and word.strip()]
+    def word_segmentation(self, text):
+        seg_list = text.split()
         return seg_list
     
 def generate_results_json(queries, processor, top_ns):
@@ -273,6 +266,5 @@ queries = {
 }
 top_ns = [1, 3, 5]
 
-jieba.load_userdict('jieba_dict.txt') 
-# 生成和保存结果
+jieba.set_dictionary('dict.txt.big.txt')
 generate_results_json(queries, processor, top_ns)

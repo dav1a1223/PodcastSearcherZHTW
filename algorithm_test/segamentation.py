@@ -8,10 +8,8 @@ def get_stopwords(file):
             stopword_list.append(line)
     return stopword_list
 def word_segmentation(text, stopwords):
-     # 合并文本为一个长字符串
     combined_text = ''.join(text)
    
-    # 使用 jieba 进行搜索引擎模式的分词
     seg_list = jieba.lcut(combined_text)
 
     filtered_seg_list = [word.strip() for word in seg_list if word.strip()]
