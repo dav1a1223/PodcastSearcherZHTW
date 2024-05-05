@@ -10,7 +10,7 @@ def get_stopwords(file):
 def word_segmentation(text, stopwords):
     combined_text = ''.join(text)
    
-    seg_list = jieba.lcut(combined_text)
+    seg_list = jieba.lcut_for_search(combined_text)
 
     filtered_seg_list = [word.strip() for word in seg_list if word.strip()]
     return filtered_seg_list

@@ -14,8 +14,12 @@ class TextProcessor:
                 stopword_list.append(line)
         return stopword_list
 
-    def word_segmentation(self, text):
-        seg_list = text.split()
+    def word_segmentation(self, text, need_remove_stopwords=True):
+
+        # 使用 Jieba 進行斷詞
+        seg_list = jieba.lcut_for_search(text)
+        if need_remove_stopwords:
+            seg_list = [word for word in seg_list if word not in self.stopwords and word.strip()]
         return seg_list
     
 def generate_results_json(queries, processor, top_ns):
@@ -26,7 +30,12 @@ def generate_results_json(queries, processor, top_ns):
         "tf-idf_all_terms": [],
         "bm25_all_terms": []
     }
-    query_errors = []
+    with open("好味小姐.json", 'r', encoding='utf-8') as file:
+        data = json.load(file)
+
+
+# Create a mapping from episode number to full title
+    episode_mapping = {key.split()[0]: key for key in data.keys()}
     with open('bm25.json', 'r', encoding='utf-8') as f:
             bm25_data = json.load(f)
     
@@ -34,8 +43,8 @@ def generate_results_json(queries, processor, top_ns):
             tf_idf_data = json.load(f)
 
     queries = [
-    {"type": "transcripts", "data": queries['transcripts']},
-    {"type": "timecode", "data": queries['timecode']},
+    #{"type": "transcripts", "data": queries['transcripts']},
+    #{"type": "timecode", "data": queries['timecode']},
     {"type": "dcard", "data": queries['dcard']}
 ]
     for query in queries:
@@ -51,16 +60,16 @@ def generate_results_json(queries, processor, top_ns):
 
         for top_n in top_ns:
             print(f"Processing {query_type} for top {top_n}")
-            query_data = [([term.upper() for term in query_terms if isinstance(term, str)], doc_id) for query_terms, doc_id in query_data]
-            tf_idf_accuracy= calculate_accuracy(tf_idf_data, query_data, query_tf_idf_document, processor, top_n)
-            bm25_accuracy = calculate_accuracy(bm25_data, query_data, query_bm25_document, processor, top_n)
-            tf_idf_all_terms_accuracy= calculate_accuracy(tf_idf_data, query_data, query_tf_idf_document_all_terms, processor, top_n)
-            bm25_all_terms_accuracy= calculate_accuracy(bm25_data, query_data, query_bm25_document_all_terms, processor, top_n)
+            #query_data = [([term.upper() for term in query_terms if isinstance(term, str)], doc_id) for query_terms, doc_id in query_data]
+            #tf_idf_accuracy= calculate_accuracy(tf_idf_data, query_data, query_tf_idf_document, processor, top_n)
+            bm25_accuracy, error_list = calculate_accuracy(bm25_data, query_data, query_bm25_document, processor, top_n, episode_mapping)
+            #tf_idf_all_terms_accuracy= calculate_accuracy(tf_idf_data, query_data, query_tf_idf_document_all_terms, processor, top_n)
+            #bm25_all_terms_accuracy= calculate_accuracy(bm25_data, query_data, query_bm25_document_all_terms, processor, top_n)
             
-            tf_idf_results[f"P{top_n}"] = tf_idf_accuracy
+            #tf_idf_results[f"P{top_n}"] = tf_idf_accuracy
             bm25_results[f"P{top_n}"] = bm25_accuracy
-            tf_idf_all_terms_results[f"P{top_n}"] = tf_idf_all_terms_accuracy
-            bm25_all_terms_results[f"P{top_n}"] = bm25_all_terms_accuracy
+            #tf_idf_all_terms_results[f"P{top_n}"] = tf_idf_all_terms_accuracy
+            #bm25_all_terms_results[f"P{top_n}"] = bm25_all_terms_accuracy
 
         results["tf-idf"].append({
             "query": query_name,
@@ -78,9 +87,10 @@ def generate_results_json(queries, processor, top_ns):
             "query": query_name,
             **bm25_all_terms_results
         })
+        errors.append(error_list)
 
     save_accuracies_to_json(results)
-    #save_errors_to_json(errors, "errors.json")
+    save_errors_to_json(errors, "errors.json")
 
 def extract_ep_numbers(document_ids):
     pattern = r"EP(\d+)"
@@ -89,22 +99,25 @@ def extract_ep_numbers(document_ids):
 
 def adjust_doc_id_format(doc_id):
     return f"EP{doc_id}" if doc_id.isdigit() else doc_id   
+
 def load_query_data(file_path):
     queries = []
     with open(file_path, 'r', encoding='utf-8') as file:
         for line in file:
-            parts = line.strip().split('\t')
-            if len(parts) == 2:
-                queries.append((eval(parts[0]), parts[1]))  
+            parts = line.strip().split()
+            if len(parts) > 1: 
+                doc_id = parts[-1]  
+                query_terms = parts[:-1]
+                queries.append((query_terms, doc_id))
     return queries
 
-def calculate_accuracy(data, queries, query_function, processor, top_n):
+def calculate_accuracy(data, queries, query_function, processor, top_n, episodes):
     correct_predictions = 0
     error_list = []
-    for query_terms, correct_doc_id in queries:
-        predicted_doc_ids = query_function(data, processor, ' '.join(query_terms), top_n)
-        #formatted_correct_doc_id = f"EP{correct_doc_id} "
-        #formatted_correct_doc_id = next((doc_id for doc_id in term_scores.keys() if doc_id.startswith(formatted_correct_doc_id)), None)
+    for query_terms, correct_doc_id in queries:   
+        formatted_correct_doc_id = f"EP{correct_doc_id}"
+        predicted_doc_ids, term_scores, correct_details = query_function(data, processor, ' '.join(query_terms), top_n, formatted_correct_doc_id, episodes)
+        print(correct_details )
 
         if predicted_doc_ids is None:
             cleaned_predicted_doc_ids = []
@@ -112,20 +125,20 @@ def calculate_accuracy(data, queries, query_function, processor, top_n):
             cleaned_predicted_doc_ids = extract_ep_numbers(predicted_doc_ids)
         if correct_doc_id in cleaned_predicted_doc_ids:
             correct_predictions += 1
-        '''else:
+        else:
             errors = {doc_id: term_scores.get(doc_id, []) for doc_id in predicted_doc_ids}
-            correct_details = term_scores.get(formatted_correct_doc_id, [])
+
             error_list.append({
                 "query": query_terms,
                 "predicted": predicted_doc_ids,
                 "correct": adjust_doc_id_format(correct_doc_id),
                 "details": errors,
                 "correct_details": correct_details
-            })'''
-    
+            })
+
     accuracy = correct_predictions / len(queries)
     print(f"Top {top_n} accuracy: {accuracy}")
-    return accuracy
+    return accuracy, error_list
 
 def save_errors_to_json(errors, filename):
     with open(filename, 'w', encoding='utf-8') as f:
@@ -186,14 +199,17 @@ def query_tf_idf_document_all_terms(data, processor, sentence, top_n):
     return [doc[0] for doc in top_docs]
 
 
-def query_bm25_document(data, processor, sentence, top_n):
+def query_bm25_document(data, processor, sentence, top_n, correct_doc_id, episode_mapping):
     high_weight_terms = sentence.split(',')
     terms_processed = set() 
 
     doc_scores_sum = {}
+    term_scores = {}
 
+    # Map the episode number to the complete episode title
+    correct_doc_id = episode_mapping.get(correct_doc_id)
     for term in high_weight_terms:
-        term = term.strip()  
+        '''term = term.strip()  
         if term and term not in terms_processed:
             terms_processed.add(term) 
             if term in data:
@@ -204,7 +220,7 @@ def query_bm25_document(data, processor, sentence, top_n):
                     if doc_id in doc_scores_sum:
                         doc_scores_sum[doc_id] += score
                     else:
-                        doc_scores_sum[doc_id] = score
+                        doc_scores_sum[doc_id] = score '''
 
         segmented_terms = processor.word_segmentation(term)
         for seg_term in segmented_terms:
@@ -220,10 +236,20 @@ def query_bm25_document(data, processor, sentence, top_n):
                             doc_scores_sum[doc_id] += score
                         else:
                             doc_scores_sum[doc_id] = score
-
+                        if doc_id not in term_scores:
+                            term_scores[doc_id] = {}
+                        if seg_term not in term_scores[doc_id]:
+                            term_scores[doc_id][seg_term] = score
+                        else:
+                            term_scores[doc_id][seg_term] += score
+                  
     top_docs = sorted(doc_scores_sum.items(), key=lambda x: x[1], reverse=True)[:top_n]
     selected_docs = [doc[0] for doc in top_docs]
-    return selected_docs
+    # We modify the return to also include term_scores for the selected documents
+    selected_term_scores = {doc_id: term_scores[doc_id] for doc_id in selected_docs}
+    correct_details = term_scores.get(f"{correct_doc_id}.txt", {})
+    return selected_docs, selected_term_scores, correct_details 
+
 
 
 def save_accuracies_to_json(accuracies, filename="precision.json"):
@@ -258,10 +284,9 @@ processor = TextProcessor("stopwords.txt")
 #user_input = input("請輸入想要查詢的句子：")
 #terms = processor.word_segmentation(user_input)
 #print("處理後的 query：", terms)
-queries = load_query_data("transcripts.txt")
 queries = {
-    "transcripts": load_query_data("transcripts.txt"),
-    "timecode": load_query_data("timecode.txt"),
+    #"transcripts": load_query_data("transcripts.txt"),
+    #"timecode": load_query_data("timecode.txt"),
     "dcard": load_query_data("dcard.txt")
 }
 top_ns = [1, 3, 5]

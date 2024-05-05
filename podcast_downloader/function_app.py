@@ -76,7 +76,7 @@ def get_downloaded_status(connection_string, container_name, prefix):
 
         else:
             download_status = json.loads(download_status_json)
-            logging.info(f"download_status：{download_status}")
+            logging.info(f"download_status successed")
  
     except Exception as e:
         logging.error(f"Failed to download or parse the status file {blob_name}: {e}")
@@ -101,6 +101,7 @@ def update_downloaded_status(connection_string, container_name, title, new_statu
         if title in current_status:
             current_status[title]['status'] = new_status
         else:
+            current_status[latest_guid] =  latest_guid
             current_status[title] = {
                 'guid': latest_guid,
                 'status': new_status
@@ -230,15 +231,18 @@ def timer_trigger(myTimer: func.TimerRequest, context: func.Context) -> None:
         blob_name_prefix = extract_prefix(prefix)
         container_client = blob_service_client.get_container_client(container_name)
         download_status = get_downloaded_status(connection_string, container_name, blob_name_prefix)
+        logging.info(download_status)
         if not download_status: 
             episodes_batches = feed.entries
         else: # 第一次下載這
             latest_guid = feed.entries[0].get("guid")
-            if download_status["latest_guid"] != latest_guid:    \
+            logging.info(latest_guid)
+            if download_status["latest_guid"] != latest_guid:    
                 # 只下載最新的一集
                 podcast_url = feed.entries[0].enclosures[0]["href"]
                 blob_name = f"{prefix} {feed.entries[0].title}.mp3" 
                 blob_name  = sanitize_filename(blob_name)
+                logging.info("update_downloaded_status")
                 update_downloaded_status(connection_string, container_name, blob_name, "not_downloaded", latest_guid)
                 episodes_batches = check_not_downloaded_episodes(download_status, feed.entries)
                 logging.info(f"not_downloaded Episodes batches to process: {len(episodes_batches)}")
