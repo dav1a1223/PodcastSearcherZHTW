@@ -118,9 +118,8 @@ def check_not_downloaded_episodes(status, entries):
     download_entry = []
     for entry in entries:
         try:
-            entry_status = status[sanitize_filename(entry.title)]
+            entry_status = status[sanitize_filename(entry.title)]['status']
             logging.info(f"Checking status for {entry.title}: {entry_status}")
-            
             if entry_status == 'not_downloaded':
                 download_entry.append(entry)
         except KeyError as e:
@@ -176,7 +175,7 @@ def get_stopwords(file):
     return stopword_list
 
 def word_segmentation(text, stopwords):
-    seg_list = jieba.lcut(text)
+    seg_list = jieba.lcut_for_search(text)
     filtered_seg_list = []
     for word in seg_list:
         if word not in stopwords and word.strip():
@@ -237,15 +236,15 @@ def timer_trigger(myTimer: func.TimerRequest, context: func.Context) -> None:
         else: # 第一次下載這
             latest_guid = feed.entries[0].get("guid")
             logging.info(latest_guid)
-            if download_status["latest_guid"] != latest_guid:    
+               
                 # 只下載最新的一集
-                podcast_url = feed.entries[0].enclosures[0]["href"]
-                blob_name = f"{prefix} {feed.entries[0].title}.mp3" 
-                blob_name  = sanitize_filename(blob_name)
+            blob_name = f"{prefix} {feed.entries[0].title}.mp3" 
+            blob_name  = sanitize_filename(blob_name)
+            if download_status["latest_guid"] != latest_guid: 
                 logging.info("update_downloaded_status")
                 update_downloaded_status(connection_string, container_name, blob_name, "not_downloaded", latest_guid)
-                episodes_batches = check_not_downloaded_episodes(download_status, feed.entries)
-                logging.info(f"not_downloaded Episodes batches to process: {len(episodes_batches)}")
+            episodes_batches = check_not_downloaded_episodes(download_status, feed.entries)
+            logging.info(f"not_downloaded Episodes batches to process: {len(episodes_batches)}")
 
         logging.info(f"Episodes batches to process: {len(episodes_batches)}")
         if(len(episodes_batches)) > 10:
