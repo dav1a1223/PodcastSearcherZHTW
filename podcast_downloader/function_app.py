@@ -15,7 +15,7 @@ from urllib.parse import unquote
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
 import jieba
 import re
-
+import time
 '''
 import azure.cognitiveservices.speech as speechsdk
 import tempfile
@@ -36,33 +36,38 @@ app = func.FunctionApp()
 
 # 下載並轉換 url
 def upload_rss_entity_to_blob(connection_string, container_name, blob_name, podcast_url):
+    logging.info(f"Starting upload for {blob_name}")
     try:
         blob_service_client = BlobServiceClient.from_connection_string(connection_string)
         container_client = blob_service_client.get_container_client(container_name)
         blob_client = container_client.get_blob_client(blob=blob_name)
-        
-        # 使用 requests stream下载
+
         response = requests.get(podcast_url, stream=True)
         if response.status_code == 200:
+            logging.info(f"Starting to download {podcast_url}")
             block_list = []
-            index = 0  # 用于創建 block id
-            for chunk in response.iter_content(chunk_size=4 * 1024 * 1024):  # 4MB chunk size
+            index = 0
+            for chunk in response.iter_content(chunk_size=4 * 1024 * 1024):
                 if chunk:
                     block_id = base64.b64encode(f"block-{index}".encode()).decode()
                     blob_client.stage_block(block_id, chunk)
                     block_list.append(BlobBlock(block_id))
                     index += 1
-
             blob_client.commit_block_list(block_list)
-            queue_client = QueueClient.from_connection_string(connection_string, queue_name="blob_queue")
+            queue_client = QueueClient.from_connection_string(connection_string, queue_name="blob-queue")         
+            queue_client.message_encode_policy = BinaryBase64EncodePolicy()
             message = {"blob_name": blob_name, "container_name": container_name}
-            queue_client.send_message(json.dumps(message))
-            logging.info(f"Successfully uploaded '{blob_name}' to Azure Blob Storage.")
+            logging.info(f"Sending message to queue for {blob_name}")
+            message_bytes = json.dumps(message).encode('utf-8')
+            encoded_message = base64.b64encode(message_bytes).decode('utf-8')
+            queue_client.send_message(encoded_message)
+            logging.info(f"Message sent to queue for {blob_name}")
+    
         else:
-            logging.info(f"Failed to download podcast from URL '{podcast_url}'. HTTP status code: {response.status_code}")
-
+            logging.error(f"Failed to download podcast from URL '{podcast_url}'. HTTP status code: {response.status_code}")
     except Exception as e:
-        logging.info(f"Failed to upload '{blob_name}' to Azure Blob Storage. Error: {e}")
+        logging.error(f"Failed to upload '{blob_name}' to Azure Blob Storage. Error: {e}")
+
 def get_downloaded_status(connection_string, container_name, prefix):
     try:
         blob_name = f"{prefix}.json"
@@ -90,30 +95,29 @@ def update_downloaded_status(connection_string, container_name, title, new_statu
         blob_service_client = BlobServiceClient.from_connection_string(connection_string)
         container_client = blob_service_client.get_container_client(container_name)
         blob_client = container_client.get_blob_client(blob_name)
+        download_status_json = blob_client.download_blob().readall()
         title = extract_title(title).replace('.mp3', '')
         logging.info(f"remove_mp3 title：{title}")
         try:
-            current_status = json.loads(blob_client.download_blob().content_as_text())
+            current_status = json.loads(download_status_json)
         except Exception as e:
             logging.error(f"Failed to download existing status file {blob_name}: {e}")
             raise
 
-        if title in current_status:
-            current_status[title]['status'] = new_status
-        else:
-            current_status[latest_guid] =  latest_guid
-            current_status[title] = {
-                'guid': latest_guid,
-                'status': new_status
-            }
+        if title not in current_status:
+            current_status['latest_guid'] = latest_guid
+            current_status[title] = {'guid': latest_guid, 'status': new_status}
             logging.info(f"Added new title {title} with status {new_status}.")
+        else:
+            current_status[title]['status'] = new_status
 
-
-        blob_client.upload_blob(json.dumps(current_status).encode('utf-8'), overwrite=True)
+        blob_client.upload_blob(json.dumps(current_status, ensure_ascii=False, indent=4), overwrite=True)
+       
         logging.info(f"Successfully updated the status for episode {title} to {new_status} in {blob_name}.")
     except Exception as e:
         logging.error(f"Failed to update the download status in Blob Storage for {blob_name}: {e}")
         raise
+        
 def check_not_downloaded_episodes(status, entries):
     download_entry = []
     for entry in entries:
@@ -202,7 +206,9 @@ def extract_title(full_title):
         return "No title found"
     
 def sanitize_filename(filename):
-    return re.sub(r'[\<\>:"/\\|?*]', '', filename)
+    sanitized = re.sub(r'[\<\>:"/\\|?*]', '', filename)
+    sanitized = re.sub(r'[./\\]+$', '', sanitized)
+    return sanitized
 
 @app.schedule(schedule="0 0 2 * * *", arg_name="myTimer", run_on_startup=False, use_monitor=False)
 def timer_trigger(myTimer: func.TimerRequest, context: func.Context) -> None:
@@ -243,6 +249,7 @@ def timer_trigger(myTimer: func.TimerRequest, context: func.Context) -> None:
             if download_status["latest_guid"] != latest_guid: 
                 logging.info("update_downloaded_status")
                 update_downloaded_status(connection_string, container_name, blob_name, "not_downloaded", latest_guid)
+            time.sleep(2)
             episodes_batches = check_not_downloaded_episodes(download_status, feed.entries)
             logging.info(f"not_downloaded Episodes batches to process: {len(episodes_batches)}")
 
@@ -309,11 +316,14 @@ def queue_trigger2(myqueue: func.QueueMessage):
     message = json.loads(myqueue.get_body().decode('utf-8'))
     blob_name = message['blob_name']
     container_name = message['container_name']
-    logging.info(f"blob_name{blob_name}")
     connect_str =os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     download_status = get_downloaded_status(connect_str, "podcasts", extract_prefix(blob_name))
-    logging(f"status：{download_status[extract_title(blob_name)].get('status')}")
-    if extract_title(blob_name) in download_status and download_status[extract_title(blob_name)].get('status') == 'Succeeded':
+    if blob_name.endswith('.mp3'):
+        entry_name = blob_name.rsplit('.', 1)[0]
+    entry_name = sanitize_filename(entry_name)
+    extracted_name = extract_title(entry_name)
+    logging.info(f"status：{download_status[extracted_name].get('status')}")
+    if  extracted_name in download_status and download_status[extract_title(entry_name)].get('status') == 'Succeeded':
             logging(f"Status for '{title}' is 'Succeeded'. No further action required queue.")
             return
     subscription_key = os.getenv("SPEECH_KEY")
@@ -328,7 +338,7 @@ def queue_trigger2(myqueue: func.QueueMessage):
     account_name = "podcastzhtw"
     account_key = os.getenv("AZURE_STORAGE_KEY")
     container_name = "audiofiles"
-    logging.info(blob_name)
+    logging.info(extracted_name)
     
     blob_url_with_sas = generate_sas_url(account_name, account_key, container_name, blob_name)
 
@@ -414,7 +424,6 @@ def blob_trigger(myblob: func.InputStream):
         extracted_title = extract_title(title_decoded)
         extracted_title = sanitize_filename(extracted_title)
         logging.info(f"extract_title：{extracted_title}")
-        logging.info(f"status：{download_status[extracted_title].get('status')}")
         
         if extracted_title in download_status and download_status[extracted_title].get('status') == 'Succeeded':
             logging.info(f"Status for '{title_decoded}' is 'Succeeded'. No further action required.")
