@@ -426,7 +426,7 @@ def blob_trigger(myblob: func.InputStream):
         logging.info(f"extract_title：{extracted_title}")
         
         if extracted_title in download_status and download_status[extracted_title].get('status') == 'Succeeded':
-            logging.info(f"Status for '{title_decoded}' is 'Succeeded'. No further action required.")
+            logging.info(f"Status for '{extracted_title}' is 'Succeeded'. No further action required.")
             return 
     except KeyError as e:
         logging.error(f"Key error when processing JSON content: {e}")
@@ -447,11 +447,11 @@ def blob_trigger(myblob: func.InputStream):
     try:
         container_name = "database" 
         container_client = blob_service_client.get_container_client(container_name)
-        blob_client = container_client.get_blob_client(f"{title_decoded}.txt")
+        blob_client = container_client.get_blob_client(f"{extracted_title}.txt")
 
         blob_client.upload_blob(text, blob_type="BlockBlob", overwrite=True)      
         update_downloaded_status(connect_str, "podcasts",  title_decoded, "Succeeded", "")
-        logging.info(f"Successfully uploaded {title_decoded}.txt to container {container_name}.")
+        logging.info(f"Successfully uploaded {extracted_title}txt to container {container_name}.")
 
     except Exception as e:
         logging.error(f"Failed to upload blob: {e}")
