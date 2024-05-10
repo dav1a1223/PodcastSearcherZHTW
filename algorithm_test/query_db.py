@@ -3,6 +3,22 @@ import json
 import math
 import pandas as pd
 import os
+import jieba
+
+def get_stopwords(file):
+    stopword_list = []
+    with open(file, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            stopword_list.append(line)
+    return stopword_list
+def word_segmentation(text, stopwords):
+    seg_list = jieba.lcut_for_search(text)
+
+    filtered_seg_list = [word for word in seg_list if word not in stopwords and word.strip()]
+
+    return filtered_seg_list
+
 def batch_query_cosmos_db(terms, container):
     quoted_words = [f"'{word}'" for word in terms]  
 
@@ -58,10 +74,17 @@ def batch_fetch_document(doc_ids, length_container):
 
 
 
-def process_query(query, keyword_container, length_container, k1 = 1.5, b = 0.5):
-    terms = query.split()
+def process_query(query, keyword_container, length_container, stopwords, k1 = 1.5, b = 0.5):
+    jieba.set_dictionary('dict.txt.big.txt')
+    terms = query.split()    
 
-    cosmos_results = batch_query_cosmos_db(terms, keyword_container)
+    terms_set = set(terms)
+
+    for term in terms:
+        segmented_terms = word_segmentation(term, stopwords)
+        terms_set.update(segmented_terms)  
+    
+    cosmos_results = batch_query_cosmos_db(list(terms_set), keyword_container)
     doc_ids = {doc['document_id'] for result in cosmos_results for doc in result['documents']}
     docs_details, total, avgdl = batch_fetch_document(doc_ids, length_container)
 
@@ -79,8 +102,6 @@ def process_query(query, keyword_container, length_container, k1 = 1.5, b = 0.5)
     df_term_counts = df.groupby('term')['document_id'].nunique().reset_index(name='df')
     df = df.merge(df_term_counts, on='term', how='left')
 
-    print(f"total：{total}")
-    print(f"avgdl：{avgdl}")
     df['idf'] = df['df'].apply(lambda x: max(1, math.log((total - x + 0.5) / (x + 0.5) + 1)))
 
     df['length'] = df['document_id'].map(lambda x: docs_details.get(x, {}).get('length', avgdl))
@@ -88,13 +109,9 @@ def process_query(query, keyword_container, length_container, k1 = 1.5, b = 0.5)
     df['score'] = (df['freq'] * (k1 + 1) / (df['freq'] + df['norm_factor'])) * df['idf']
     df_scores = df.groupby('document_id')['score'].sum().reset_index()
 
-    df['terms'] = df.apply(lambda x: f"{x['term']} {{'freq': {x['freq']}}}", axis=1)
-    df_terms = df.groupby('document_id')['terms'].agg(', '.join).reset_index()
-    print(df_terms.head())
-
+    df_terms = df.groupby('document_id').apply(lambda x: {term['term']: {'freq': term['freq']} for index, term in x.iterrows()}).reset_index(name='terms')
     top_docs = df_scores.merge(df_terms, on='document_id', how='left').sort_values(by='score', ascending=False).head(5)
-    print(top_docs)
-
+    
     output = {
         "query": query,
         "documents": [
@@ -115,7 +132,8 @@ database_name = 'Score'
 keyword_container =  client.get_database_client(database_name).get_container_client('bm25-score')
 length_container =  client.get_database_client(database_name).get_container_client('documents')
 
+stopwords = get_stopwords('stopwords.txt')
 user_query = "錄 開始 今天"
-search_results = process_query(user_query, keyword_container, length_container)
-print(json.dumps(search_results, ensure_ascii=False, indent=4))
+resulting_terms = process_query(user_query, keyword_container, length_container, stopwords)
+print(json.dumps(resulting_terms, ensure_ascii=False, indent=4))
 
