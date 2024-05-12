@@ -6,6 +6,7 @@ azure-functions
 feedparser
 azure-storage-blob
 azure-storage-queue
+azure-cosmos
 requests
 jieba
 python-dateutil==2.8.2

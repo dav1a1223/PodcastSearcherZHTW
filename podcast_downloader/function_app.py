@@ -1,6 +1,8 @@
 import azure.functions as func
 import requests
 from azure.storage.blob import BlobServiceClient, BlobBlock, BlobServiceClient, BlobSasPermissions, generate_blob_sas
+from azure.cosmos import CosmosClient
+import collections
 import os
 import json
 import feedparser
@@ -16,20 +18,11 @@ from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPerm
 import jieba
 import re
 import time
-'''
-import azure.cognitiveservices.speech as speechsdk
-import tempfile
-from pydub import AudioSegment
-'''
 import http.client
 import base64
-'''
-from concurrent.futures import ThreadPoolExecutor, as_completed
-'''
 import urllib.request
 import urllib.parse
 import urllib.error
-
 
 
 app = func.FunctionApp()
@@ -165,6 +158,49 @@ def generate_sas_url(account_name, account_key, container_name, blob_name):
     logging.info(f"SAS：{blob_url_with_sas}")
     return blob_url_with_sas
 
+def update_keyword(keyword, document_id, frequency, container):
+    # Query to check if the keyword exists
+    query = "SELECT * FROM c WHERE c.id = @keyword"
+    items = list(container.query_items(
+        query=query,
+        parameters=[
+            {"name": "@keyword", "value": keyword}
+        ],
+        enable_cross_partition_query=True
+    ))
+
+    if items:
+        item = items[0]
+        documents = item['documents']
+        documents.append({
+            "document_id": document_id,
+            "freq": frequency
+        })
+        # Replace the item in the database
+        container.replace_item(item, item)
+        print(f"Updated keyword '{keyword}' with new document '{document_id}'.")
+    else:
+        # Keyword does not exist, create new item
+        new_item = {
+            "id": keyword,
+            "keyword": keyword,
+            "documents": [{
+                "document_id": document_id,
+                "freq": frequency
+            }]
+        }
+        container.create_item(body=new_item)
+        print(f"Inserted new keyword '{keyword}' with document '{document_id}'.")
+
+def read_and_match_urls(feed_url, title):
+    feed = feedparser.parse(feed_url)
+    title_to_url = {(entry.title): entry.enclosures[0]['href'] for entry in feed.entries if entry.enclosures}
+
+    if title in title_to_url:
+        return title_to_url[title]
+    else:
+        logging.info(f"{title}：URL not found")
+        return "URL not found"
 
 rss_feeds = [
     {"url": "https://feeds.soundon.fm/podcasts/adf29720-e93b-4856-a09e-b73544147ec4.xml", "prefix": "【好味小姐】"}
@@ -440,16 +476,43 @@ def blob_trigger(myblob: func.InputStream):
 
     stop_words = get_stopwords('stopwords.txt')
     filtered_words = word_segmentation(transcript, stop_words)
-    filtered_text = " ".join(filtered_words)
-    text = filtered_text.encode('utf-8')
+    words = filtered_words.split()
+    length = len(words)
+    logging.info(f"Segmented and filtered words. Total words: {len(words)}")
 
- 
     try:
-        container_name = "database" 
-        container_client = blob_service_client.get_container_client(container_name)
-        blob_client = container_client.get_blob_client(f"{extracted_title}.txt")
+        connection_string = os.getenv("COSMOS_DB_CONNECTION_STRING")
+        client = CosmosClient.from_connection_string(connection_string)
+        database_name = 'Score'
+        container_word = client.get_database_client(database_name).get_container_client('bm25-score')  
+        container_doc = client.get_database_client(database_name).get_container_client('documents')
 
-        blob_client.upload_blob(text, blob_type="BlockBlob", overwrite=True)      
+        logging.info(f"Reading RSS feed URL: {rss_feeds[0]['url']}")
+        url = read_and_match_urls(rss_feeds[0]["url"], title_decoded) 
+        item_response = container_doc.read_item(item="whole", partition_key="whole")
+        whole_item = item_response.resource
+        logging.info(f"Retrieved document: {whole_item}")
+
+        total_documents = whole_item['total'] + 1
+        new_avgdl = ((whole_item['avgdl'] * whole_item['total']) + length) / total_documents
+
+        whole_item['total'] = total_documents
+        whole_item['avgdl'] = new_avgdl
+        container_doc.replace_item(item=whole_item['id'], body=whole_item)
+
+        new_item = {
+                "id": title_decoded,
+                "doc_id": title_decoded,
+                "length": length,
+                "url": url,
+        }     
+        container_doc.create_item(body=new_item)
+        
+        word_freq = collections.Counter(filtered_words)
+        logging.info("Counting word frequency.")
+        for word, freq in word_freq.items():
+            update_keyword(word, title_decoded, freq, container_word)
+
         update_downloaded_status(connect_str, "podcasts",  title_decoded, "Succeeded", "")
         logging.info(f"Successfully uploaded {extracted_title}txt to container {container_name}.")
 

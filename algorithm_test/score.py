@@ -28,9 +28,23 @@ class TextProcessor:
                 self.update_vocabulary(text)
 
     def update_vocabulary(self, text):
-
-        words = jieba.cut_for_search(text)
+        words = set(text.split())
         self.vocabulary.update(words)
+
+    def get_stopwords(file):
+        stopword_list = []
+        with open(file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                stopword_list.append(line)
+        return stopword_list
+    def word_segmentation(text, stopwords):
+        jieba.set_dictionary('dict.txt.big.txt')
+        seg_list = jieba.lcut_for_search(text)
+
+        filtered_seg_list = [word for word in seg_list if word not in stopwords and word.strip()]
+
+        return filtered_seg_list
 
     def get_transcript(self, file):
         with open(file, 'r', encoding='utf-8') as f:
@@ -92,7 +106,7 @@ class TextProcessor:
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(existing_data, f, ensure_ascii=False, indent=4)
 
-    def calculate_bm25(self, k1=2.2, b=1.2, file_path='bm25.json'):
+    def calculate_bm25(self, k1=1.75, b=0.5, file_path='bm25.json'):
         bm25_scores = {}
 
         # Calculate document lengths and average document length
@@ -107,7 +121,7 @@ class TextProcessor:
                 df[word] += 1
 
         # Calculate inverse document frequency (IDF) for each word
-        idf = {word: math.log((N + 1) / (df[word] + 0.5)) for word in df}
+        idf = {word: max(1, math.log((N - df[word]+ 0.5) / (df[word] + 0.5))) for word in df}
 
         # Calculate BM25 scores for each document
         for doc_id, document in zip(self.document_ids, self.documents):
@@ -149,11 +163,10 @@ class TextProcessor:
 
 processor = TextProcessor()
 processor.process_folder("transcrips") 
-processor.calculate_tfidf()
+
 print("tf-idf 分析结果已保存至 tf-idf.json。")
 processor.calculate_bm25()
 print("bm25 分析结果已保存至 bm25.json。")
-processor.save_jieba_dictionary("jieba_dict.txt")
 
 
 
