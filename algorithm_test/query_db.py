@@ -102,7 +102,7 @@ def process_query(query, keyword_container, length_container, stopwords, k1 = 1.
     df_term_counts = df.groupby('term')['document_id'].nunique().reset_index(name='df')
     df = df.merge(df_term_counts, on='term', how='left')
 
-    df['idf'] = df['df'].apply(lambda x: max(1, math.log((total - x + 0.5) / (x + 0.5) + 1)))
+    df['idf'] = df['df'].apply(lambda x: math.log((total - x + 0.5) / (x + 0.5) + 1))
 
     df['length'] = df['document_id'].map(lambda x: docs_details.get(x, {}).get('length', avgdl))
     df['norm_factor'] = df['length'].apply(lambda l: k1 * (1 - b + b * (l / avgdl)))
