@@ -25,8 +25,6 @@ def batch_query_cosmos_db(terms, container):
     formatted_terms = ", ".join(quoted_words) 
     query = f"SELECT VALUE c FROM c WHERE c.keyword IN ({formatted_terms})" 
     
-    print(f"Querying with terms: {formatted_terms}")  
-    
     try:
         items = list(container.query_items(
             query=query,
@@ -59,7 +57,6 @@ def batch_fetch_document(doc_ids, length_container):
                 'length': item['length'],
                 'url': item['url']
             }
-        print(docs_details)
         if items_N:
             total_value = items_N[0]['total'] if 'total' in items_N[0] else None
             avgdl_value = items_N[0]['avgdl'] if 'avgdl' in items_N[0] else None
@@ -78,12 +75,15 @@ def process_query(query, keyword_container, length_container, stopwords, k1 = 1.
     jieba.set_dictionary('dict.txt.big.txt')
     terms = query.split()    
 
+    terms_map = {term: term.upper() for term in terms}
     terms_set = set(terms)
 
     for term in terms:
         segmented_terms = word_segmentation(term, stopwords)
-        terms_set.update(segmented_terms)  
-    
+        for seg_term in segmented_terms:
+            terms_map[seg_term] = seg_term.upper() 
+        terms_set.update(terms_map[seg_term] for seg_term in segmented_terms)
+
     cosmos_results = batch_query_cosmos_db(list(terms_set), keyword_container)
     doc_ids = {doc['document_id'] for result in cosmos_results for doc in result['documents']}
     docs_details, total, avgdl = batch_fetch_document(doc_ids, length_container)
@@ -91,9 +91,10 @@ def process_query(query, keyword_container, length_container, stopwords, k1 = 1.
     data = []
     for result in cosmos_results:
         for doc in result['documents']:
+            original_term = next(key for key, val in terms_map.items() if val == result['id'])
             data.append({
                 'document_id': doc['document_id'],
-                'term': result['id'], 
+                'term': original_term,  # Use original case for terms in output
                 'freq': doc['freq']
             })
   
@@ -133,7 +134,7 @@ keyword_container =  client.get_database_client(database_name).get_container_cli
 length_container =  client.get_database_client(database_name).get_container_client('documents')
 
 stopwords = get_stopwords('stopwords.txt')
-user_query = "錄 開始 今天"
+user_query = "錄 開始 今天 popular"
 resulting_terms = process_query(user_query, keyword_container, length_container, stopwords)
 print(json.dumps(resulting_terms, ensure_ascii=False, indent=4))
 
