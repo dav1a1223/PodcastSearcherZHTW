@@ -132,7 +132,7 @@ class UserProfileDialog(ComponentDialog):
     async def summary_step(self, step_context: WaterfallStepContext) -> DialogTurnResult:
         step_context.values["satisfied"] = step_context.result
         if step_context.values["satisfied"]:
-            await step_context.context.send_activity(MessageFactory.text('搜尋結束，謝謝您~'))
+            await step_context.context.send_activity(MessageFactory.text('搜尋結束，謝謝您的使用～歡迎填寫回饋問卷，分享您的想法和建議，這對我們來說非常重要，感謝您！https://forms.gle/e4aWqA5WjBQyXLNk8'))
             return await step_context.end_dialog()
         else:
             text = "是否要再重新搜尋呢？" + "\n" + "（💡提示：輸入越多出現次數高的關鍵字，搜尋結果會更準確唷！）"
@@ -148,43 +148,3 @@ class UserProfileDialog(ComponentDialog):
         else:
             await step_context.context.send_activity(MessageFactory.text('搜尋結束，謝謝您的使用～歡迎填寫回饋問卷，分享您的想法和建議，這對我們來說非常重要，感謝您！https://forms.gle/e4aWqA5WjBQyXLNk8'))
             return await step_context.end_dialog()
-
-    '''async def summary_step(self, step_context: WaterfallStepContext) -> DialogTurnResult:
-        step_context.values["satisfied"] = step_context.result
-        if step_context.values["satisfied"]:
-            return await step_context.prompt(
-                ConfirmPrompt.__name__,
-                PromptOptions(prompt=MessageFactory.text("你想搜尋其他的Podcast節目嗎？")),
-            )
-        else:
-            return await step_context.prompt(
-                ConfirmPrompt.__name__,
-                PromptOptions(prompt=MessageFactory.text("是否要再重新輸入搜尋內容呢？")),
-            )
-    async def handle_query_again(self, step_context: WaterfallStepContext) -> DialogTurnResult:
-        if not step_context.values["satisfied"]:
-            query_another = step_context.result
-            if query_another: #modify -> 回到query_step
-                # step_context.context.active_dialog.state["stepIndex"] = step_context.context.active_dialog.state["stepIndex"] - 3
-                # return await self.query_step(step_context)
-                return await step_context.replace_dialog(self.initial_dialog_id)
-            else:         
-                return await step_context.prompt(
-                ConfirmPrompt.__name__,
-                PromptOptions(prompt=MessageFactory.text("你想搜尋其他的Podcast節目嗎？")),
-                )
-        else:
-            step_context.values["search_another"] = step_context.result
-            return await step_context.continue_dialog()
-
-    async def final_step(self, step_context: WaterfallStepContext) -> DialogTurnResult:
-        if step_context.values["satisfied"]:
-            search_another = step_context.values["search_another"]
-        else: 
-            search_another = step_context.result
-            
-        if search_another:
-            return await step_context.replace_dialog(self.initial_dialog_id)
-        else:
-            await step_context.context.send_activity(MessageFactory.text('搜尋結束，謝謝您~'))
-            return await step_context.end_dialog()'''
