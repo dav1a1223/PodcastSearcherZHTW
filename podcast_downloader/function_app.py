@@ -506,11 +506,12 @@ def blob_trigger(myblob: func.InputStream):
 
         whole_item['total'] = total_documents
         whole_item['avgdl'] = new_avgdl
+        logging.info(f" total_documents：{total_documents}")
         container_doc.replace_item(item=whole_item['id'], body=whole_item)
 
         new_item = {
-                "id": title_decoded,
-                "doc_id": title_decoded,
+                "id": extracted_title,
+                "doc_id": extracted_title,
                 "length": length,
                 "url": url,
         }     
@@ -519,10 +520,10 @@ def blob_trigger(myblob: func.InputStream):
         word_freq = collections.Counter(filtered_words)
         logging.info("Counting word frequency.")
         for word, freq in word_freq.items():
-            update_keyword(word, title_decoded, freq, container_word)
+            update_keyword(word, extracted_title, freq, container_word)
 
-        update_downloaded_status(connect_str, "podcasts",  title_decoded, "Succeeded", "")
-        logging.info(f"Successfully uploaded {extracted_title}txt to container {container_name}.")
+        update_downloaded_status(connect_str, "podcasts",  extracted_title , "Succeeded", "")
+        logging.info(f"Successfully uploaded {extracted_title}.txt to container {container_name}.")
 
     except Exception as e:
         logging.error(f"Failed to upload blob: {e}")
