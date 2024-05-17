@@ -3,5 +3,6 @@
 
 from .user_profile_dialog import UserProfileDialog
 from .user_profile_dialog import TextProcessor
+from .user_profile_dialog import CosmosDBQuery
 
-__all__ = ["UserProfileDialog","TextProcessor"]
+__all__ = ["UserProfileDialog","TextProcessor","CosmosDBQuery"]
