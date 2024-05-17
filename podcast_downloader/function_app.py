@@ -115,7 +115,7 @@ def check_not_downloaded_episodes(status, entries):
     download_entry = []
     for entry in entries:
         try:
-            entry_status = status[sanitize_filename(entry.title)]['status']
+            entry_status = status[entry.title]['status']
             logging.info(f"Checking status for {entry.title}: {entry_status}")
             if entry_status == 'not_downloaded':
                 download_entry.append(entry)
@@ -178,7 +178,6 @@ def update_keyword(keyword, document_id, frequency, container):
         })
         # Replace the item in the database
         container.replace_item(item, item)
-        print(f"Updated keyword '{keyword}' with new document '{document_id}'.")
     else:
         # Keyword does not exist, create new item
         new_item = {
@@ -190,7 +189,6 @@ def update_keyword(keyword, document_id, frequency, container):
             }]
         }
         container.create_item(body=new_item)
-        print(f"Inserted new keyword '{keyword}' with document '{document_id}'.")
 
 def read_and_match_urls(feed_url, title):
     feed = feedparser.parse(feed_url)
@@ -216,10 +214,7 @@ def get_stopwords(file):
 
 def word_segmentation(text, stopwords):
     seg_list = jieba.lcut_for_search(text)
-    filtered_seg_list = []
-    for word in seg_list:
-        if word not in stopwords and word.strip():
-            filtered_seg_list.append(word)
+    filtered_seg_list = [word for word in seg_list if word not in stopwords and word.strip()]
     return filtered_seg_list
 
 def extract_prefix(blob_name):
@@ -459,26 +454,39 @@ def blob_trigger(myblob: func.InputStream):
         download_status = get_downloaded_status(connect_str, "podcasts", extract_prefix(title_decoded))
         extracted_title = extract_title(title_decoded)
         extracted_title = sanitize_filename(extracted_title)
-        logging.info(f"extract_title：{extracted_title}")
+        logging.info(f"Checking status for extracted title: {extracted_title}")
+        if extracted_title in download_status:
+            logging.info(f"Status for '{extracted_title}': {download_status[extracted_title].get('status')}")
+        else:
+            logging.warning(f"Extracted title '{extracted_title}' not found in download_status")
         
-        if extracted_title in download_status and download_status[extracted_title].get('status') == 'Succeeded':
-            logging.info(f"Status for '{extracted_title}' is 'Succeeded'. No further action required.")
-            return 
+        if extracted_title in download_status:
+            status = download_status[extracted_title].get('status')
+            logging.info(f"Status for {extracted_title}: {status}")
+            
+            if status == 'Succeeded':
+                logging.info(f"Status for '{extracted_title}' is 'Succeeded'. No further action required.")
+                return 
+        else:
+            logging.warning(f"Extracted title '{extracted_title}' not found in download_status")
+
     except KeyError as e:
         logging.error(f"Key error when processing JSON content: {e}")
         raise
 
     try:
         transcript = json_content["combinedRecognizedPhrases"][0]["display"]
+        logging.info(f"transcript：{transcript}")
+        full_transcript = ' '.join([extracted_title, transcript])
+        logging.info(f"full_transcript：{full_transcript}")
     except (KeyError, IndexError) as e:
         logging.error(f"Error extracting transcript: {e}")
         raise
 
     stop_words = get_stopwords('stopwords.txt')
-    filtered_words = word_segmentation(transcript, stop_words)
-    words = filtered_words.split()
-    length = len(words)
-    logging.info(f"Segmented and filtered words. Total words: {len(words)}")
+    filtered_words = word_segmentation(full_transcript, stop_words)
+    length = len(filtered_words)
+    logging.info(f"Segmented and filtered words. Total words: {len(filtered_words)}")
 
     try:
         connection_string = os.getenv("COSMOS_DB_CONNECTION_STRING")
@@ -488,9 +496,9 @@ def blob_trigger(myblob: func.InputStream):
         container_doc = client.get_database_client(database_name).get_container_client('documents')
 
         logging.info(f"Reading RSS feed URL: {rss_feeds[0]['url']}")
-        url = read_and_match_urls(rss_feeds[0]["url"], title_decoded) 
+        url = read_and_match_urls(rss_feeds[0]["url"], extract_title(title_decoded)) 
         item_response = container_doc.read_item(item="whole", partition_key="whole")
-        whole_item = item_response.resource
+        whole_item = item_response
         logging.info(f"Retrieved document: {whole_item}")
 
         total_documents = whole_item['total'] + 1
