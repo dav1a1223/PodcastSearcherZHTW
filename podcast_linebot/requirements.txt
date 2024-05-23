@@ -3,4 +3,6 @@ botbuilder-integration-aiohttp>=4.14.0
 botbuilder-dialogs>=4.14.0
 botbuilder-ai>=4.14.0
 jieba>=0.42.1
+azure-cosmos>=4.2.0
+pandas>=2.1.0
 

@@ -310,7 +310,6 @@ def timer_trigger(myTimer: func.TimerRequest, context: func.Context) -> None:
 def queue_trigger(azqueue: func.QueueMessage):
     connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
     
-      # 將解碼後的 bytes 轉換為 JSON 字符串
     message = json.loads(azqueue.get_body().decode('utf-8'))
     rss_url = message['url']
     prefix = message['prefix'] 
@@ -487,6 +486,8 @@ def blob_trigger(myblob: func.InputStream):
     filtered_words = word_segmentation(full_transcript, stop_words)
     length = len(filtered_words)
     logging.info(f"Segmented and filtered words. Total words: {len(filtered_words)}")
+    update_downloaded_status(connect_str, "podcasts",  title_decoded , "Succeeded", "")
+    logging.info(f"Successfully uploaded {extracted_title}.txt to container {container_name}.")
 
     try:
         connection_string = os.getenv("COSMOS_DB_CONNECTION_STRING")
@@ -497,18 +498,7 @@ def blob_trigger(myblob: func.InputStream):
 
         logging.info(f"Reading RSS feed URL: {rss_feeds[0]['url']}")
         url = read_and_match_urls(rss_feeds[0]["url"], extract_title(title_decoded)) 
-        item_response = container_doc.read_item(item="whole", partition_key="whole")
-        whole_item = item_response
-        logging.info(f"Retrieved document: {whole_item}")
-
-        total_documents = whole_item['total'] + 1
-        new_avgdl = ((whole_item['avgdl'] * whole_item['total']) + length) / total_documents
-
-        whole_item['total'] = total_documents
-        whole_item['avgdl'] = new_avgdl
-        logging.info(f" total_documents：{total_documents}")
-        container_doc.replace_item(item=whole_item['id'], body=whole_item)
-
+        
         new_item = {
                 "id": extracted_title,
                 "doc_id": extracted_title,
@@ -522,8 +512,17 @@ def blob_trigger(myblob: func.InputStream):
         for word, freq in word_freq.items():
             update_keyword(word, extracted_title, freq, container_word)
 
-        update_downloaded_status(connect_str, "podcasts",  extracted_title , "Succeeded", "")
-        logging.info(f"Successfully uploaded {extracted_title}.txt to container {container_name}.")
+        item_response = container_doc.read_item(item="whole", partition_key="whole")
+        whole_item = item_response
+        logging.info(f"Retrieved document: {whole_item}")
+
+        total_documents = whole_item['total'] + 1
+        new_avgdl = ((whole_item['avgdl'] * whole_item['total']) + length) / total_documents
+
+        whole_item['total'] = total_documents
+        whole_item['avgdl'] = new_avgdl
+        logging.info(f" total_documents：{total_documents}")
+        container_doc.replace_item(item=whole_item['id'], body=whole_item)
 
     except Exception as e:
         logging.error(f"Failed to upload blob: {e}")

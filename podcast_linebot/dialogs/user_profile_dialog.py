@@ -6,6 +6,7 @@ from botbuilder.dialogs import (
     WaterfallDialog,
     WaterfallStepContext,
     DialogTurnResult,
+    DialogTurnStatus
 )
 from botbuilder.dialogs.prompts import (
     TextPrompt,
@@ -17,11 +18,15 @@ from botbuilder.dialogs.prompts import (
     PromptValidatorContext,
 )
 from botbuilder.dialogs.choices import Choice
-from botbuilder.core import MessageFactory, UserState
+from botbuilder.core import MessageFactory, UserState, CardFactory
+from botbuilder.schema import (HeroCard, Attachment, CardImage, CardAction, ActionTypes, AttachmentLayoutTypes)
+import os
+import json
+connection_string = os.environ.get("COSMOS_DB_CONNECTION_STRING","")
 
 from data_models import UserProfile
-import jieba
 from .text_processor import TextProcessor
+from .query_db import CosmosDBQuery
 
 class UserProfileDialog(ComponentDialog):
     def __init__(self, user_state: UserState):
@@ -37,7 +42,7 @@ class UserProfileDialog(ComponentDialog):
                     self.query_step,
                     self.confirm_step,
                     self.summary_step,
-                    self.handle_query_again,
+                    # self.handle_query_again,
                     self.final_step
                 ],
             )
@@ -49,26 +54,29 @@ class UserProfileDialog(ComponentDialog):
         self.initial_dialog_id = WaterfallDialog.__name__
 
     async def podcast_step(self, step_context: WaterfallStepContext) -> DialogTurnResult:
-        return await step_context.prompt(
-            ChoicePrompt.__name__,
-            PromptOptions(
-                prompt=MessageFactory.text("Please select the podcast you are interested in."),
-                choices=[Choice("podcast A"), Choice("podcast B"), Choice("podcast C")],
-            ),
-        )
-
+        if step_context.context.activity.text== "@search" or "Yes":
+            return await step_context.prompt(
+                ChoicePrompt.__name__,
+                PromptOptions(
+                    prompt=MessageFactory.text("請選擇你有興趣查詢的Podcast節目～"),
+                    choices=[Choice("好味小姐")],
+                )
+            )
+        else:
+            return DialogTurnResult(DialogTurnStatus.Complete)
+    
     async def query_step(self, step_context: WaterfallStepContext) -> DialogTurnResult:
         podcast = step_context.result.value
         step_context.values["podcast"] = podcast
 
         await step_context.context.send_activity(
-            MessageFactory.text(f"Your choice is {podcast}.")
+            MessageFactory.text(f"你的選擇是：{podcast}")
         )
 
         return await step_context.prompt(
                 TextPrompt.__name__,
                 PromptOptions(
-                    prompt=MessageFactory.text("Please enter your query.\nUse，to separate each term.")),
+                    prompt=MessageFactory.text("請輸入你想搜尋的內容，若是輸入關鍵字，請用「，」分隔。")),
         )
     
     async def confirm_step( self, step_context: WaterfallStepContext) -> DialogTurnResult:
@@ -81,50 +89,62 @@ class UserProfileDialog(ComponentDialog):
         user_profile.query = step_context.values["query"]
 
         processor = TextProcessor()
-        seg_list =  processor.word_segmentation(user_profile.query, True)
-        msg = f"Choice of podcast : {user_profile.podcast} \nYour query : {seg_list}"
+        user_query = processor.word_segmentation(user_profile.query, True) # 斷詞後的 query list 型態
+        str_query = ' '.join(user_query) # 轉成 string 格式
+        db_query = CosmosDBQuery(connection_string, 'Score','stopwords.txt')
+        resulting_terms = db_query.process_query(str_query) # return 搜尋結果
+        # formatted_output = ""
+        
+        reply = MessageFactory.list([])
+        reply.attachment_layout = AttachmentLayoutTypes.carousel
+        for idx, doc in enumerate(resulting_terms['documents'], start=1):
+            doc_id = doc['document_id']
+            terms = ', '.join([f'"{term}": {term_data["freq"]}' for term, term_data in doc['terms'].items()])
+            url = doc['url']
+            # formatted_output += f"{idx}. {doc_id}\n{terms}\n"
 
-        await step_context.context.send_activity(MessageFactory.text(msg))
+            card = HeroCard(
+                title = doc_id,
+                # images=[
+                #     CardImage(
+                #         url="https://images.pexels.com/photos/6686442/pexels-photo-6686442.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2"
+                #     )
+                # ],
+                text = "以下為搜尋關鍵字在該集出現的次數:\n\n" + terms,
+                buttons=[
+                    CardAction(
+                        type=ActionTypes.open_url,
+                        title="Open URL",
+                        value=url,
+                    )
+                ],
+            )
+            reply.attachments.append(CardFactory.hero_card(card))
+
+        await step_context.context.send_activity(reply)
+        
 
         return await step_context.prompt(
             ConfirmPrompt.__name__,
-            PromptOptions(prompt=MessageFactory.text("Are you satisfied with the search result?")),
+            PromptOptions(prompt=MessageFactory.text("是否滿意此搜尋結果？")),
         )
     
     async def summary_step(self, step_context: WaterfallStepContext) -> DialogTurnResult:
         step_context.values["satisfied"] = step_context.result
         if step_context.values["satisfied"]:
+            await step_context.context.send_activity(MessageFactory.text('搜尋結束，謝謝您的使用～歡迎填寫回饋問卷，分享您的想法和建議，這對我們來說非常重要，感謝您！https://forms.gle/e4aWqA5WjBQyXLNk8'))
+            return await step_context.end_dialog()
+        else:
+            text = "是否要再重新搜尋呢？" + "\n" + "（💡提示：輸入越多出現次數高的關鍵字，搜尋結果會更準確唷！）"
             return await step_context.prompt(
                 ConfirmPrompt.__name__,
-                PromptOptions(prompt=MessageFactory.text("Do you want to search for another podcast program?")),
+                PromptOptions(prompt=MessageFactory.text(text)),
             )
-        else:
-            return await step_context.prompt(
-                ConfirmPrompt.__name__,
-                PromptOptions(prompt=MessageFactory.text("Do you want to enter your query again?")),
-            )
-    async def handle_query_again(self, step_context: WaterfallStepContext) -> DialogTurnResult:
-        if not step_context.values["satisfied"]:
-            query_another = step_context.result
-            if query_another: #modify -> 回到query_step
-                return await step_context.replace_dialog(self.initial_dialog_id)
-            else:         
-                return await step_context.prompt(
-                ConfirmPrompt.__name__,
-                PromptOptions(prompt=MessageFactory.text("Do you want to search for another podcast program?")),
-                )
-        else:
-            step_context.values["search_another"] = step_context.result
-            return await step_context.continue_dialog()
-
+        
     async def final_step(self, step_context: WaterfallStepContext) -> DialogTurnResult:
-        if step_context.values["satisfied"]:
-            search_another = step_context.values["search_another"]
-        else: 
-            search_another = step_context.result
-            
-        if search_another:
+        step_context.values["search_again"] = step_context.result
+        if step_context.values["search_again"]:
             return await step_context.replace_dialog(self.initial_dialog_id)
         else:
-            await step_context.context.send_activity(MessageFactory.text('Thank you~'))
+            await step_context.context.send_activity(MessageFactory.text('搜尋結束，謝謝您的使用～歡迎填寫回饋問卷，分享您的想法和建議，這對我們來說非常重要，感謝您！https://forms.gle/e4aWqA5WjBQyXLNk8'))
             return await step_context.end_dialog()

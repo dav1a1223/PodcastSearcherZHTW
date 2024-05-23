@@ -77,7 +77,7 @@ def process_query(query, keyword_container, length_container, stopwords, k1 = 1.
 
     terms_map = {term: term.upper() for term in terms}
     terms_set = set(terms)
-
+    print(terms_set)
     for term in terms:
         segmented_terms = word_segmentation(term, stopwords)
         for seg_term in segmented_terms:
@@ -85,6 +85,8 @@ def process_query(query, keyword_container, length_container, stopwords, k1 = 1.
         terms_set.update(terms_map[seg_term] for seg_term in segmented_terms)
 
     cosmos_results = batch_query_cosmos_db(list(terms_set), keyword_container)
+    if not cosmos_results:
+        return None
     doc_ids = {doc['document_id'] for result in cosmos_results for doc in result['documents']}
     docs_details, total, avgdl = batch_fetch_document(doc_ids, length_container)
 
@@ -134,7 +136,8 @@ keyword_container =  client.get_database_client(database_name).get_container_cli
 length_container =  client.get_database_client(database_name).get_container_client('documents')
 
 stopwords = get_stopwords('stopwords.txt')
-user_query = "錄 開始 今天 popular"
+user_query = "哈薩克 總統"
 resulting_terms = process_query(user_query, keyword_container, length_container, stopwords)
+
 print(json.dumps(resulting_terms, ensure_ascii=False, indent=4))
 
